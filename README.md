@@ -57,3 +57,64 @@ make -j4
 ```
 
 ## 🚀 运行指南
+
+### 1. 接收端配置 (PC端)
+
+在运行板子上的程序前，请先在 PC 端准备好接收工具。你可以使用 `ffplay` (FFmpeg 组件) 来播放。
+
+**PC端命令 (Windows/Linux):**
+
+```bash
+# -f h264: 指定格式为 H.264
+# -i udp://0.0.0.0:8888: 监听本地 8888 端口
+# -fflags nobuffer: 禁用缓冲区以降低延迟
+# -flags low_delay: 低延迟模式
+
+ffplay -f h264 -fflags nobuffer -flags low_delay -framedrop -i udp://0.0.0.0:8888
+```
+
+### 2. 发送端配置 (Orange Pi)
+
+修改 `src/main.cpp` 中的目标 IP，将其指向你的 PC：
+
+```cpp
+#define DEST_IP   "192.168.1.xxx" // <--- 修改为你 PC 的 IP 地址
+#define DEST_PORT 8888            // <--- 确保没有被防火墙拦截
+```
+
+### 3. 开始推流
+
+在板子上执行编译好的程序：
+
+```bash
+cd build
+sudo ./auv_vision /dev/video0
+```
+
+如果一切正常，你应该能在 PC 上看到来自摄像头的实时画面，且延迟极低。
+
+## 📝 关键参数说明
+
+在 `src/main.cpp` 中可以调整以下宏定义：
+
+*   `DST_WIDTH` / `DST_HEIGHT`: RGA 输出和 MPP 编码的分辨率（默认 640x640）。
+*   `UDP_MTU`: UDP 分包大小（默认 1024），建议小于 MTU 1500。
+
+在 `src/mpp_encoder.cpp` 中可以调整编码参数：
+
+*   `bps` (Bitrate): 目标码率，当前设置为 2Mbps ~ 3Mbps。
+*   `rc:mode`: 码率控制模式 (CBR 固定码率)。
+
+## ⚠️ 常见问题排查
+
+1.  **PC 端收不到画面**：
+    *   检查 PC 的防火墙是否允许 UDP 8888 端口。
+    *   检查 `main.cpp` 中的 `DEST_IP` 是否填写正确。
+    *   确保 PC 和开发板在同一个局域网网段。
+
+2.  **画面绿屏或花屏**：
+    *   检查 MPP 的 stride (跨距) 设置。RK3588 通常要求宽和高对齐到 16 或 32。
+    *   检查 RGA 转换时的格式是否设置为 `RK_FORMAT_YCbCr_420_SP` (即 NV12)。
+
+3.  **Permission Denied (权限错误)**：
+    *   操作 `/dev/video0` 和 `/dev/dma_heap` 通常需要 root 权限，请使用 `sudo` 运行。
