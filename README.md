@@ -1,6 +1,6 @@
-# AUV-StreamCore
+# VisionLink-RK
 
-**AUV-StreamCore** 是一个专为 **Rockchip RK3588** 平台（如 Orange Pi 5 Pro）设计的高性能、低延迟视频推流引擎。
+**VisionLink-RK** 是一个专为 **Rockchip RK3588** 平台（如 Orange Pi 5 Pro）设计的高性能、低延迟视频推流引擎 适用于水下机器人等带宽受限场景进行视频流传输
 
 该项目充分利用了 Rockchip 的硬件加速能力，实现了从摄像头采集、色彩空间转换、H.264 编码到网络传输的全链路优化。
 
@@ -8,9 +8,7 @@
 
 *   **V4L2 采集**：直接操作底层 Video4Linux2 接口，获取原始 YUYV 图像数据。
 *   **硬件加速转换 (RGA)**：使用 Rockchip **RGA (2D Graphic Acceleration)** 进行格式转换（YUYV -> NV12）和缩放。
-    *   *亮点：使用 DMA Buffer 实现零拷贝 (Zero-Copy)，不占用 CPU。*
 *   **硬件编码 (MPP)**：集成 Rockchip **MPP (Media Process Platform)**，实现 H.264 硬件编码。
-    *   *亮点：支持 CBR (固定码率) 控制，直接输入 DMA FD，极大降低延迟。*
 *   **UDP 低延迟传输**：通过原始 UDP Socket 发送 H.264 码流，极大减少传输开销。
 
 ## 🛠️ 硬件与环境要求
@@ -21,7 +19,7 @@
     *   `libv4l-dev`
     *   `librga-dev` (Rockchip RGA)
     *   `librockchip-mpp-dev` (Rockchip MPP)
-    *   `opencv` (可选，目前仅用于辅助)
+    *   `opencv` (可选，目前仅用于测试各模块效果)
 
 ## 📂 项目结构
 
