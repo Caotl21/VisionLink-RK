@@ -1,0 +1,14 @@
+# 忽略构建目录
+build/
+cmake-build-debug/
+
+# 忽略编译生成的中间文件
+*.o
+*.obj
+
+# 忽略最终生成的可执行文件 (假设你的程序叫 auv_vision)
+auv_vision
+
+# 忽略 IDE 配置文件 (VSCode, CLion 等)
+.vscode/
+.idea/

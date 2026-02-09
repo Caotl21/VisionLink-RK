@@ -1,3 +1,0 @@
-/home/AUV1/Videos/auv_vision_project/build/CMakeFiles/auv_vision.dir
-/home/AUV1/Videos/auv_vision_project/build/CMakeFiles/edit_cache.dir
-/home/AUV1/Videos/auv_vision_project/build/CMakeFiles/rebuild_cache.dir
