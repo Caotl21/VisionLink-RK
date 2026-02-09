@@ -27,12 +27,13 @@
 #include "mpp_encoder.h"
 #include "v4l2_utils.h"
 
-#define VIDEO_DEVICE    "/dev/video0"
-#define DST_WIDTH       640
-#define DST_HEIGHT      640
-#define DEST_IP         "192.168.1.115"
-#define DEST_PORT       8888
-#define UDP_MTU         1024
+#define VIDEO_DEVICE        "/dev/video0"       // 摄像头设备路径
+#define DST_WIDTH           640                 // RGA 输出宽度
+#define DST_HEIGHT          640                 // RGA 输出高度
+#define DEST_IP             "192.168.1.115"     // 目标IP地址
+#define DEST_PORT           8888                // 目标端口号
+#define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
+#define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
 
 struct UdpContext{
     int socket_fd;
@@ -77,6 +78,11 @@ int main(int argc, char *argv[]){
         printf("Failed to initialize V4L2\n");
         return -1;
     }
+
+#if _Capability_Query
+    // 查询视频设备能力，列出支持的像素格式、分辨率和帧率
+    v4l2_capability_query(v4l2_ctx.fd);
+#endif
 
     UdpContext udp_ctx;
     if(udp_init(&udp_ctx, DEST_IP, DEST_PORT) < 0){

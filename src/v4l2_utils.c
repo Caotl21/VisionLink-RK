@@ -1,5 +1,11 @@
 #include "../inc/v4l2_utils.h"
 
+
+/**
+ *   @brief   查询视频设备能力，列出支持的像素格式、分辨率和帧率
+ *   @param   fd  视频设备文件描述符
+ *   @return  0 成功，-1 失败
+**/
 int v4l2_capability_query(int fd) {
     // 查询视频设备能力
     struct v4l2_capability cap;
@@ -43,8 +49,8 @@ int v4l2_capability_query(int fd) {
         // 遍历出所有摄像头支持的视频采集分辨率
         while(ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) == 0){
             if (frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
-                //printf("  支持的分辨率 %d: %ux%u\n", frmsize.index,
-                       //frmsize.discrete.width, frmsize.discrete.height);
+                printf("  支持的分辨率 %d: %ux%u\n", frmsize.index,
+                       frmsize.discrete.width, frmsize.discrete.height);
             }
             frmsize.index++;
             frmival.index = 0;
@@ -54,8 +60,8 @@ int v4l2_capability_query(int fd) {
             while(ioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &frmival) == 0)
             {
                 if (frmival.type == V4L2_FRMIVAL_TYPE_DISCRETE) {
-                    //printf("    支持的帧率 %d: %u/%u fps\n", frmival.index,
-                           //frmival.discrete.numerator, frmival.discrete.denominator);
+                    printf("    支持的帧率 %d: %u/%u fps\n", frmival.index,
+                           frmival.discrete.numerator, frmival.discrete.denominator);
                 }
                 frmival.index++;
             }
@@ -63,6 +69,12 @@ int v4l2_capability_query(int fd) {
     }
 }
 
+/** 
+ * @brief   初始化视频设备
+ * @param   ctx     V4L2 上下文结构体
+ * @param   device  视频设备路径
+ * @return  0 成功，-1 失败
+**/
 int v4l2_init(V4L2Context *ctx, const char *device) {
     
     // 打开视频设备
@@ -144,6 +156,13 @@ int v4l2_init(V4L2Context *ctx, const char *device) {
     return 0;
 }
 
+/** 
+ * @brief   获取一帧视频数据
+ * @param   ctx V4L2 上下文结构体
+ * @return  成功返回指向帧数据的指针，失败返回 NULL
+ * @remark  调用该函数会从视频设备出队一个缓冲区，并返回指向该缓冲区数据的指针。
+            调用者在处理完数据后需要调用 v4l2_release_frame() 将缓冲区重新入队。
+**/
 unsigned char* v4l2_get_frame(V4L2Context *ctx){
     memset(&ctx->buffer, 0, sizeof(struct v4l2_buffer));
     ctx->buffer.memory = V4L2_MEMORY_MMAP;
@@ -156,6 +175,11 @@ unsigned char* v4l2_get_frame(V4L2Context *ctx){
     return ctx->mptr[ctx->buffer.index];
 }
 
+/** 
+ * @brief   释放一帧视频数据
+ * @param   ctx V4L2 上下文结构体
+ * @remark  调用该函数会将之前获取的帧缓冲区重新入队，以便后续继续使用。
+**/
 void v4l2_release_frame(V4L2Context *ctx){
     // 入队
     if(ioctl(ctx->fd, VIDIOC_QBUF, &ctx->buffer) < 0) {
@@ -163,6 +187,11 @@ void v4l2_release_frame(V4L2Context *ctx){
     }
 }
 
+/** 
+ * @brief   关闭视频设备
+ * @param   ctx V4L2 上下文结构体
+ * @remark  调用该函数会停止视频采集，释放映射的缓冲区，并关闭设备文件描述符。
+**/
 void v4l2_deinit(V4L2Context *ctx){
     // 停止视频采集
     int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
