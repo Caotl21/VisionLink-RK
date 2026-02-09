@@ -19,7 +19,7 @@
     *   `libv4l-dev`
     *   `librga-dev` (Rockchip RGA)
     *   `librockchip-mpp-dev` (Rockchip MPP)
-    *   `opencv` (可选，目前仅用于测试各模块效果)
+    *   `opencv` (可选，目前仅用于测试各模块效果<!--  -->)
 
 ## 📂 项目结构
 
@@ -68,7 +68,8 @@ make -j4
 # -fflags nobuffer: 禁用缓冲区以降低延迟
 # -flags low_delay: 低延迟模式
 
-ffplay -f h264 -fflags nobuffer -flags low_delay -framedrop -i udp://0.0.0.0:8888
+ffplay -f h264 udp://0.0.0.0:8888     -fflags nobuffer     -flags low_delay     -framedrop     -strict experimental     -probesize 32     -analyzeduration 0     -sync ext
+
 ```
 
 ### 2. 发送端配置 (Orange Pi)

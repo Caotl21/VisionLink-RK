@@ -34,6 +34,38 @@
 #define DEST_PORT       8888
 #define UDP_MTU         1024
 
+struct UdpContext{
+    int socket_fd;
+    struct sockaddr_in dest_addr;
+};
+
+int udp_init(UdpContext *ctx, const char *dest_ip, int port){
+    ctx->socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (ctx->socket_fd < 0) {
+        perror("Socket creation failed");
+        return -1;
+    }
+
+    memset(&ctx->dest_addr, 0, sizeof(ctx->dest_addr));
+    ctx->dest_addr.sin_family = AF_INET;
+    ctx->dest_addr.sin_port = htons(port);
+    ctx->dest_addr.sin_addr.s_addr = inet_addr(dest_ip);
+
+    return 0;
+}
+
+void udp_send(UdpContext *ctx, void *data, size_t len){
+     uint8_t *send_ptr = (uint8_t*)data;
+     size_t remain = len;
+
+     while(remain > 0){
+         size_t chunk = (remain > UDP_MTU) ? UDP_MTU : remain;
+         sendto(ctx->socket_fd, send_ptr, chunk, 0 , (struct sockaddr *)&ctx->dest_addr, sizeof(ctx->dest_addr));
+         send_ptr += chunk;
+         remain -= chunk;
+     }
+}
+
 
 int main(int argc, char *argv[]){
 
@@ -43,6 +75,12 @@ int main(int argc, char *argv[]){
     V4L2Context v4l2_ctx;
     if(v4l2_init(&v4l2_ctx, VIDEO_DEVICE) < 0){
         printf("Failed to initialize V4L2\n");
+        return -1;
+    }
+
+    UdpContext udp_ctx;
+    if(udp_init(&udp_ctx, DEST_IP, DEST_PORT) < 0){
+        printf("Failed to initialize UDP\n");
         return -1;
     }
 
@@ -66,25 +104,6 @@ int main(int argc, char *argv[]){
         printf("MPP Failed to initialize encoder\n");
         return -1;
     }
-
-    // ==========================================================
-    // [新增] 初始化 UDP Socket
-    // ==========================================================
-    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock_fd < 0) {
-        perror("Socket creation failed");
-        return -1;
-    }
-
-    struct sockaddr_in dest_addr;
-    memset(&dest_addr, 0, sizeof(dest_addr));
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(8888); // 目标端口，PC端要监听这个
-    // 【注意】这里必须填你 PC 的 IP 地址！请在 PC 终端输入 ipconfig 或 ifconfig 查看
-    dest_addr.sin_addr.s_addr = inet_addr("192.168.1.115"); 
-
-    // 设置 UDP 分包大小 (以太网 MTU 通常 1500，我们留点余量设 1400)
-    const int UDP_PACKET_SIZE = 1024;
 
     while(1)
     {
@@ -115,21 +134,7 @@ int main(int argc, char *argv[]){
             if(h264_len > 0){
                 // 网络发送代码
                 printf("Frame %d encoded: %zu bytes\n", frame_cnt++, h264_len);
-                uint8_t *send_ptr = (uint8_t*)h264_data;
-                size_t remaining = h264_len;
-
-                while (remaining > 0) {
-                    // 计算当前包大小
-                    size_t chunk_size = (remaining > UDP_PACKET_SIZE) ? UDP_PACKET_SIZE : remaining;
-
-                    // 发送数据
-                    sendto(sock_fd, send_ptr, chunk_size, 0, 
-                           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-
-                    // 指针后移
-                    send_ptr += chunk_size;
-                    remaining -= chunk_size;
-                }
+                udp_send(&udp_ctx, h264_data, h264_len);
             }
         } else{
             printf("MPP Failed to encode frame\n");
@@ -144,7 +149,7 @@ int main(int argc, char *argv[]){
     free_dma_buffer(&mpp_buf);
 
     v4l2_deinit(&v4l2_ctx);
-    close(sock_fd);
+    close(udp_ctx.socket_fd);
     return 0;
 
 }
