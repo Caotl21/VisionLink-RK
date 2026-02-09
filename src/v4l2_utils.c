@@ -101,7 +101,7 @@ int v4l2_init(V4L2Context *ctx, const char *device) {
 
     // 申请Buffer
     struct v4l2_requestbuffers req = {0};
-    req.count = 4; // 请求4个缓冲区
+    req.count = 1; // 请求1个缓冲区
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP; // 内存映射方式
     if (ioctl(ctx->fd, VIDIOC_REQBUFS, &req) < 0) {
