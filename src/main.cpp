@@ -52,6 +52,11 @@ int udp_init(UdpContext *ctx, const char *dest_ip, int port){
     ctx->dest_addr.sin_port = htons(port);
     ctx->dest_addr.sin_addr.s_addr = inet_addr(dest_ip);
 
+    int sock_buf_size = 32 * 1024; // 32KB，足够放一个 I 帧，但放不下更多
+    if (setsockopt(ctx->socket_fd, SOL_SOCKET, SO_SNDBUF, &sock_buf_size, sizeof(sock_buf_size)) < 0) {
+        perror("设置发送缓冲区失败");
+    }
+
     return 0;
 }
 
