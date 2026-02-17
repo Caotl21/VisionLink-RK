@@ -20,6 +20,7 @@ add_executable(auv_vision
     src/dma_utils.cpp
     src/mpp_encoder.cpp
     src/v4l2_utils.c
+    src/yolo_detector.cpp
 )
 
 target_link_libraries(auv_vision
