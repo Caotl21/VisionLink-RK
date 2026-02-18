@@ -17,7 +17,7 @@ typedef struct {
 
 class RKNNDetector{
 public:
-    RKNNDetector(const std::string &model_path);
+    RKNNDetector();
     ~RKNNDetector();
 
     int init(const std::string& model_path);

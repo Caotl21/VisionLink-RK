@@ -6,8 +6,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-RKNNDetector::RKNNDetector(const std::string &model_path):ctx(0), model_data(nullptr), model_data_size(0),
-                             input_attrs(nullptr), output_attrs(nullptr), model_path(model_path), width(640), 
+RKNNDetector::RKNNDetector():ctx(0), model_data(nullptr), model_data_size(0),
+                             input_attrs(nullptr), output_attrs(nullptr), model_path(""), width(640), 
                              height(640), channel(3), img_width(0), img_height(0), nms_threshold(NMS_THRESH), 
                              box_conf_threshold(BOX_THRESH) {
 }
@@ -212,6 +212,7 @@ int RKNNDetector::inference(unsigned char* img_data, std::vector<DetectResult>& 
     for(int i=0;i<detect_result_group.count;i++){
         DetectResult res;
         res.id = detect_result_group.results[i].class_index;
+        res.name = detect_result_group.results[i].name;
         res.confidence = detect_result_group.results[i].prop;
         res.box.left = detect_result_group.results[i].box.left;
         res.box.top = detect_result_group.results[i].box.top;

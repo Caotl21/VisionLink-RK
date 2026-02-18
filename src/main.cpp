@@ -26,11 +26,12 @@
 #include "dma_utils.h"
 #include "mpp_encoder.h"
 #include "v4l2_utils.h"
+#include "yolo_detector.h"
 
 #define VIDEO_DEVICE        "/dev/video0"       // 摄像头设备路径
 #define DST_WIDTH           640                 // RGA 输出宽度
 #define DST_HEIGHT          640                 // RGA 输出高度
-#define DEST_IP             "192.168.1.115"     // 目标IP地址
+#define DEST_IP             "192.168.13.10"     // 目标IP地址
 #define DEST_PORT           8888                // 目标端口号
 #define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
@@ -99,7 +100,17 @@ int main(int argc, char *argv[]){
     size_t mpp_size = DST_HEIGHT * DST_WIDTH * 3 / 2;
     struct DmaBuffer mpp_buf;
     if(alloc_dma_buffer(mpp_size, &mpp_buf) < 0) {
+        free_dma_buffer(&mpp_buf);
         perror("MPP buffer alloc_dma_buffer failed");
+        return -1;
+    }
+
+    // 申请一块内存给NPU用 NPU需要RGB888 大小 W*H*3
+    size_t npu_size = DST_HEIGHT * DST_WIDTH * 3;
+    struct DmaBuffer npu_buf;
+    if (alloc_dma_buffer(npu_size, &npu_buf)<0) {
+        perror("NPU buffer alloc_dma_buffer failed");
+        free_dma_buffer(&mpp_buf);
         return -1;
     }
 
@@ -107,7 +118,8 @@ int main(int argc, char *argv[]){
     rga_buffer_t src_img, dst_img;
     memset(&src_img, 0, sizeof(src_img));
     memset(&dst_img, 0, sizeof(dst_img));
-    dst_img = wrapbuffer_fd(mpp_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_YCbCr_420_SP);
+    //dst_img = wrapbuffer_fd(mpp_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_YCbCr_420_SP);
+    dst_img = wrapbuffer_fd(npu_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_RGB_888);
 
     MppEncoder encoder;
     // 初始化摄像头分辨率 30fps
@@ -115,6 +127,16 @@ int main(int argc, char *argv[]){
         printf("MPP Failed to initialize encoder\n");
         return -1;
     }
+
+    RKNNDetector detector;
+    if(detector.init("../model/yolov5s.rknn") < 0){
+        printf("Failed to initialize RKNNDetector\n");
+        return -1;
+    }
+
+    // 调试用：Mat对象指向npu_buf虚拟地址
+    cv::Mat orig_img(DST_HEIGHT, DST_WIDTH, CV_8UC3, npu_buf.vaddr);
+    cv::Mat show_img(DST_HEIGHT, DST_WIDTH, CV_8UC3);
 
     while(1)
     {
@@ -137,11 +159,36 @@ int main(int argc, char *argv[]){
             continue;
         }
 
-        // 编码 NV12 数据，得到 H264 码流
-        void *h264_data = NULL;
-        size_t h264_len = 0;
+        // 执行推理
+        std::vector<DetectResult> results;
+        int ret = detector.inference((unsigned char*)npu_buf.vaddr, results);
+        if(ret==0){
+            if(!results.empty()){
+                printf("=============================================================\n");
+                for(const auto&res:results){
+                    printf("Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
+                           res.id, res.name.c_str(), res.confidence,
+                           res.box.left, res.box.top, res.box.right, res.box.bottom);
+                    cv::rectangle(orig_img, cv::Point(res.box.left, res.box.top), cv::Point(res.box.right, res.box.bottom), cv::Scalar(256, 0, 0, 256), 3);
+                    cv::putText(orig_img, res.name, cv::Point(res.box.left, res.box.top + 12), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255));
+                }
+            }
+        }else{
+            printf("RKNN inference failed with error code: %d\n", ret);
+        }
 
-        if(encoder.encode(mpp_buf.fd, &h264_data, &h264_len) == 0){
+        // 显示（RGB -> BGR）
+        cv::cvtColor(orig_img, show_img, cv::COLOR_RGB2BGR);
+        cv::imshow("YOLOv5-Preview", show_img);
+        if(cv::waitKey(1) == 27) { // 按 ESC 退出
+            break;
+        }
+
+        // 编码 NV12 数据，得到 H264 码流
+        //void *h264_data = NULL;
+        //size_t h264_len = 0;
+
+        /*if(encoder.encode(mpp_buf.fd, &h264_data, &h264_len) == 0){
             if(h264_len > 0){
                 // 网络发送代码
                 printf("Frame %d encoded: %zu bytes\n", frame_cnt++, h264_len);
@@ -149,7 +196,7 @@ int main(int argc, char *argv[]){
             }
         } else{
             printf("MPP Failed to encode frame\n");
-        }
+        }*/
 
         // 入队
         v4l2_release_frame(&v4l2_ctx);
