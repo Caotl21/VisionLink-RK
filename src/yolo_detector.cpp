@@ -150,6 +150,14 @@ rknn_context *RKNNDetector::get_ctx(){
     return &ctx;
 }
 
+/**
+ * @brief  执行推理并获取检测结果
+ * @param  img_data 输入图像数据，假设为RGB888格式。
+ * @param  results 输出检测结果的向量。
+ * @return 成功返回0，失败返回-1。
+ * @remark 该函数设置输入数据，执行推理，并进行后处理得到检测结果。
+ *         需要确保输入图像数据的大小与模型输入尺寸一致。
+**/
 int RKNNDetector::inference(unsigned char* img_data, std::vector<DetectResult>& results){
     int ret;
 
