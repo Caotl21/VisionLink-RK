@@ -78,8 +78,8 @@ int MppEncoder::init(int width, int height, int fps){
     mpp_enc_cfg_set_s32(cfg, "prep:format", MPP_FMT_YUV420SP); // RGA 输出的格式
     mpp_enc_cfg_set_s32(cfg, "rc:mode", MPP_ENC_RC_MODE_CBR); // 固定码率:适合网络传输
     
-    // 目标码率2Mbps，最大码率3Mbps，最小码率1Mbps
-    int bps = 2 * 1024 * 1024;
+    // 目标码率3Mbps，最大码率4.5Mbps，最小码率1.5Mbps
+    int bps = 3 * 1024 * 1024;
     mpp_enc_cfg_set_s32(cfg, "rc:bps_target", bps);
     mpp_enc_cfg_set_s32(cfg, "rc:bps_max", bps * 1.5);
     mpp_enc_cfg_set_s32(cfg, "rc:bps_min", bps / 2);

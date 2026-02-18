@@ -115,11 +115,12 @@ int main(int argc, char *argv[]){
     }
 
     // 定义 RGA 相关变量
-    rga_buffer_t src_img, dst_img;
+    rga_buffer_t src_img, infer_img, dst_img;
     memset(&src_img, 0, sizeof(src_img));
+    memset(&infer_img, 0, sizeof(infer_img));
     memset(&dst_img, 0, sizeof(dst_img));
-    //dst_img = wrapbuffer_fd(mpp_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_YCbCr_420_SP);
-    dst_img = wrapbuffer_fd(npu_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_RGB_888);
+    dst_img = wrapbuffer_fd(mpp_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_YCbCr_420_SP);
+    infer_img = wrapbuffer_fd(npu_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_RGB_888);
 
     MppEncoder encoder;
     // 初始化摄像头分辨率 30fps
@@ -129,7 +130,7 @@ int main(int argc, char *argv[]){
     }
 
     RKNNDetector detector;
-    if(detector.init("../model/yolov5s.rknn") < 0){
+    if(detector.init("../model/yolov5s-640-640.rknn") < 0){
         printf("Failed to initialize RKNNDetector\n");
         return -1;
     }
@@ -149,9 +150,9 @@ int main(int argc, char *argv[]){
             continue;
         }
         
-        // RGA 进行格式转换和缩放，输入 src_ptr (YUYV422)，输出 dst_img (NV12)
+        // RGA 进行格式转换和缩放，输入 src_ptr (YUYV422)，输出 infer_img (RGB888)
         src_img = wrapbuffer_virtualaddr(src_ptr, SRC_WIDTH, SRC_HEIGHT, RK_FORMAT_YUYV_422);
-        IM_STATUS status = imresize(src_img, dst_img);
+        IM_STATUS status = imresize(src_img, infer_img);
         
         if (status != IM_STATUS_SUCCESS) {
             printf("RGA Error: %s\n", imStrError(status));
@@ -169,7 +170,7 @@ int main(int argc, char *argv[]){
                     printf("Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
                            res.id, res.name.c_str(), res.confidence,
                            res.box.left, res.box.top, res.box.right, res.box.bottom);
-                    cv::rectangle(orig_img, cv::Point(res.box.left, res.box.top), cv::Point(res.box.right, res.box.bottom), cv::Scalar(256, 0, 0, 256), 3);
+                    cv::rectangle(orig_img, cv::Point(res.box.left, res.box.top), cv::Point(res.box.right, res.box.bottom), cv::Scalar(0, 255, 0), 3);
                     cv::putText(orig_img, res.name, cv::Point(res.box.left, res.box.top + 12), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255));
                 }
             }
@@ -177,18 +178,20 @@ int main(int argc, char *argv[]){
             printf("RKNN inference failed with error code: %d\n", ret);
         }
 
-        // 显示（RGB -> BGR）
-        cv::cvtColor(orig_img, show_img, cv::COLOR_RGB2BGR);
-        cv::imshow("YOLOv5-Preview", show_img);
-        if(cv::waitKey(1) == 27) { // 按 ESC 退出
-            break;
+        // 将推理结果绘制到原图上
+        status = imresize(infer_img, dst_img);
+        
+        if (status != IM_STATUS_SUCCESS) {
+            printf("RGA Error: %s\n", imStrError(status));
+            v4l2_release_frame(&v4l2_ctx);
+            continue;
         }
 
         // 编码 NV12 数据，得到 H264 码流
-        //void *h264_data = NULL;
-        //size_t h264_len = 0;
+        void *h264_data = NULL;
+        size_t h264_len = 0;
 
-        /*if(encoder.encode(mpp_buf.fd, &h264_data, &h264_len) == 0){
+        if(encoder.encode(mpp_buf.fd, &h264_data, &h264_len) == 0){
             if(h264_len > 0){
                 // 网络发送代码
                 printf("Frame %d encoded: %zu bytes\n", frame_cnt++, h264_len);
@@ -196,7 +199,7 @@ int main(int argc, char *argv[]){
             }
         } else{
             printf("MPP Failed to encode frame\n");
-        }*/
+        }
 
         // 入队
         v4l2_release_frame(&v4l2_ctx);
