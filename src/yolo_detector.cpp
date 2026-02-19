@@ -218,6 +218,7 @@ int RKNNDetector::inference(unsigned char* img_data, std::vector<DetectResult>& 
 
     results.clear();
     for(int i=0;i<detect_result_group.count;i++){
+        if(detect_result_group.results[i].prop < box_conf_threshold) continue; // 过滤低置信度结果
         DetectResult res;
         res.id = detect_result_group.results[i].class_index;
         res.name = detect_result_group.results[i].name;

@@ -23,7 +23,6 @@ int alloc_dma_buffer(size_t size, struct DmaBuffer *buf);
  * @param buf 需要释放的 DmaBuffer 结构体指针
  */
 void free_dma_buffer(struct DmaBuffer *buf);
-//int dma_sync_cpu(int fd, bool start);
 void dma_sync_cpu(int fd);
 void dma_sync_device(int fd);
 

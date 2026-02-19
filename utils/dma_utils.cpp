@@ -79,27 +79,6 @@ void free_dma_buffer(struct DmaBuffer *buf) {
     }
 }
 
-/*int dma_sync_cpu(int fd, bool start) {
-    struct dma_buf_sync sync_args = {0};
-
-    // 我们告诉内核：CPU 即将进行 READ 操作 (如果也要写，用 DMA_BUF_SYNC_RW)
-    sync_args.flags = DMA_BUF_SYNC_READ;
-
-    if (start) {
-        // 开始读取前：Invalidate Cache (抛弃旧缓存，强制从 RAM 读)
-        sync_args.flags |= DMA_BUF_SYNC_START;
-    } else {
-        // 读取结束后
-        sync_args.flags |= DMA_BUF_SYNC_END;
-    }
-
-    if (ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync_args) < 0) {
-        perror("DMA_BUF_IOCTL_SYNC failed");
-        return -1;
-    }
-    return 0;
-}*/
-
 // 辅助函数：同步 Cache
 // 在 CPU 读取/写入之前调用 (Invalidate Cache)
 void dma_sync_cpu(int fd) {
