@@ -79,7 +79,7 @@ void free_dma_buffer(struct DmaBuffer *buf) {
     }
 }
 
-int dma_sync_cpu(int fd, bool start) {
+/*int dma_sync_cpu(int fd, bool start) {
     struct dma_buf_sync sync_args = {0};
 
     // 我们告诉内核：CPU 即将进行 READ 操作 (如果也要写，用 DMA_BUF_SYNC_RW)
@@ -98,4 +98,19 @@ int dma_sync_cpu(int fd, bool start) {
         return -1;
     }
     return 0;
+}*/
+
+// 辅助函数：同步 Cache
+// 在 CPU 读取/写入之前调用 (Invalidate Cache)
+void dma_sync_cpu(int fd) {
+    struct dma_buf_sync sync_args;
+    sync_args.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW;
+    ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync_args);
+}
+
+// 在 CPU 读取/写入之后调用 (Flush Cache)
+void dma_sync_device(int fd) {
+    struct dma_buf_sync sync_args;
+    sync_args.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW;
+    ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync_args);
 }

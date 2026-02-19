@@ -163,6 +163,9 @@ int main(int argc, char *argv[]){
         // 执行推理
         std::vector<DetectResult> results;
         int ret = detector.inference((unsigned char*)npu_buf.vaddr, results);
+
+        dma_sync_cpu(npu_buf.fd);
+
         if(ret==0){
             if(!results.empty()){
                 printf("=============================================================\n");
@@ -177,6 +180,8 @@ int main(int argc, char *argv[]){
         }else{
             printf("RKNN inference failed with error code: %d\n", ret);
         }
+
+        dma_sync_device(npu_buf.fd);
 
         // 将推理结果绘制到原图上
         status = imresize(infer_img, dst_img);
