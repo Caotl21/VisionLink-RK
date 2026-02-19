@@ -8,6 +8,7 @@
 
 *   **V4L2 采集**：直接操作底层 Video4Linux2 接口，获取原始 YUYV 图像数据。
 *   **硬件加速转换 (RGA)**：使用 Rockchip **RGA (2D Graphic Acceleration)** 进行格式转换（YUYV -> NV12）和缩放。
+*   **板载AI算力 (NPU)**：集成 Rockchip **NPU (Network Process Unite)**，利用6 Tops算力进行硬件加速。
 *   **硬件编码 (MPP)**：集成 Rockchip **MPP (Media Process Platform)**，实现 H.264 硬件编码。
 *   **UDP 低延迟传输**：通过原始 UDP Socket 发送 H.264 码流，极大减少传输开销。
 
