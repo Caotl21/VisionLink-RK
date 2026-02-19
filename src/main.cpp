@@ -26,14 +26,16 @@
 #include "dma_utils.h"
 #include "mpp_encoder.h"
 #include "v4l2_utils.h"
+#include "yolo_detector.h"
 
 #define VIDEO_DEVICE        "/dev/video0"       // 摄像头设备路径
 #define DST_WIDTH           640                 // RGA 输出宽度
 #define DST_HEIGHT          640                 // RGA 输出高度
-#define DEST_IP             "192.168.1.115"     // 目标IP地址
+#define DEST_IP             "192.168.13.10"     // 目标IP地址
 #define DEST_PORT           8888                // 目标端口号
 #define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
+#define _USE_OPENCV_DRAW    0                   // 定义该宏以启用OPENCV绘制检测框
 
 struct UdpContext{
     int socket_fd;
@@ -51,6 +53,11 @@ int udp_init(UdpContext *ctx, const char *dest_ip, int port){
     ctx->dest_addr.sin_family = AF_INET;
     ctx->dest_addr.sin_port = htons(port);
     ctx->dest_addr.sin_addr.s_addr = inet_addr(dest_ip);
+
+    int sock_buf_size = 32 * 1024; // 32KB，足够放一个 I 帧，但放不下更多
+    if (setsockopt(ctx->socket_fd, SOL_SOCKET, SO_SNDBUF, &sock_buf_size, sizeof(sock_buf_size)) < 0) {
+        perror("设置发送缓冲区失败");
+    }
 
     return 0;
 }
@@ -94,15 +101,27 @@ int main(int argc, char *argv[]){
     size_t mpp_size = DST_HEIGHT * DST_WIDTH * 3 / 2;
     struct DmaBuffer mpp_buf;
     if(alloc_dma_buffer(mpp_size, &mpp_buf) < 0) {
+        free_dma_buffer(&mpp_buf);
         perror("MPP buffer alloc_dma_buffer failed");
         return -1;
     }
 
+    // 申请一块内存给NPU用 NPU需要RGB888 大小 W*H*3
+    size_t npu_size = DST_HEIGHT * DST_WIDTH * 3;
+    struct DmaBuffer npu_buf;
+    if (alloc_dma_buffer(npu_size, &npu_buf)<0) {
+        perror("NPU buffer alloc_dma_buffer failed");
+        free_dma_buffer(&mpp_buf);
+        return -1;
+    }
+
     // 定义 RGA 相关变量
-    rga_buffer_t src_img, dst_img;
+    rga_buffer_t src_img, infer_img, dst_img;
     memset(&src_img, 0, sizeof(src_img));
+    memset(&infer_img, 0, sizeof(infer_img));
     memset(&dst_img, 0, sizeof(dst_img));
     dst_img = wrapbuffer_fd(mpp_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_YCbCr_420_SP);
+    infer_img = wrapbuffer_fd(npu_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_RGB_888);
 
     MppEncoder encoder;
     // 初始化摄像头分辨率 30fps
@@ -110,6 +129,16 @@ int main(int argc, char *argv[]){
         printf("MPP Failed to initialize encoder\n");
         return -1;
     }
+
+    RKNNDetector detector;
+    if(detector.init("../model/yolov5s-640-640.rknn") < 0){
+        printf("Failed to initialize RKNNDetector\n");
+        return -1;
+    }
+
+    // 调试用：Mat对象指向npu_buf虚拟地址
+    cv::Mat orig_img(DST_HEIGHT, DST_WIDTH, CV_8UC3, npu_buf.vaddr);
+    cv::Mat show_img(DST_HEIGHT, DST_WIDTH, CV_8UC3);
 
     while(1)
     {
@@ -122,9 +151,68 @@ int main(int argc, char *argv[]){
             continue;
         }
         
-        // RGA 进行格式转换和缩放，输入 src_ptr (YUYV422)，输出 dst_img (NV12)
+        // RGA 进行格式转换和缩放，输入 src_ptr (YUYV422)，输出 infer_img (RGB888)
         src_img = wrapbuffer_virtualaddr(src_ptr, SRC_WIDTH, SRC_HEIGHT, RK_FORMAT_YUYV_422);
-        IM_STATUS status = imresize(src_img, dst_img);
+        IM_STATUS status = imresize(src_img, infer_img);
+        
+        if (status != IM_STATUS_SUCCESS) {
+            printf("RGA Error: %s\n", imStrError(status));
+            v4l2_release_frame(&v4l2_ctx);
+            continue;
+        }
+
+        // 执行推理
+        std::vector<DetectResult> results;
+        int ret = detector.inference((unsigned char*)npu_buf.vaddr, results);
+
+#if _USE_OPENCV_DRAW
+        // 使用OpenCV将推理结果绘制到原图上
+        dma_sync_cpu(npu_buf.fd);
+
+        if(ret==0){
+            if(!results.empty()){
+                printf("=============================================================\n");
+                for(const auto&res:results){
+                    printf("OpenCV: Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
+                           res.id, res.name.c_str(), res.confidence,
+                           res.box.left, res.box.top, res.box.right, res.box.bottom);
+                    cv::rectangle(orig_img, cv::Point(res.box.left, res.box.top), cv::Point(res.box.right, res.box.bottom), cv::Scalar(0, 255, 0), 3);
+                    cv::putText(orig_img, res.name, cv::Point(res.box.left, res.box.top + 12), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255));
+                }
+            }
+        }else{
+            printf("RKNN inference failed with error code: %d\n", ret);
+        }
+
+        dma_sync_device(npu_buf.fd);
+#else
+        // 使用RGA将推理结果绘制到原图上
+        if(ret==0 && !results.empty()){
+            printf("=============================================================\n");
+            
+            uint32_t color = 0xFF00FF00; // 绿色（若颜色异常再换通道顺序）
+            int thickness = 3;
+
+            for(const auto&res:results){
+                printf("RGA: Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
+                       res.id, res.name.c_str(), res.confidence,
+                       res.box.left, res.box.top, res.box.right, res.box.bottom);
+                im_rect rect;
+                rect.x = res.box.left;
+                rect.y = res.box.top;
+                rect.width = res.box.right - res.box.left;
+                rect.height = res.box.bottom - res.box.top;
+                // 绘制矩形框
+                status = imrectangle(infer_img, rect, color, thickness, 1); //同步
+                if (status != IM_STATUS_SUCCESS) {
+                    printf("RGA rectangle Error: %s\n", imStrError(status));
+                }
+
+            }
+        }
+#endif 
+
+        status = imresize(infer_img, dst_img);
         
         if (status != IM_STATUS_SUCCESS) {
             printf("RGA Error: %s\n", imStrError(status));

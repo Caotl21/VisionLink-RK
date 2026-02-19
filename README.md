@@ -8,6 +8,7 @@
 
 *   **V4L2 采集**：直接操作底层 Video4Linux2 接口，获取原始 YUYV 图像数据。
 *   **硬件加速转换 (RGA)**：使用 Rockchip **RGA (2D Graphic Acceleration)** 进行格式转换（YUYV -> NV12）和缩放。
+*   **板载AI算力 (NPU)**：集成 Rockchip **NPU (Network Process Unite)**，利用6 Tops算力进行硬件加速。
 *   **硬件编码 (MPP)**：集成 Rockchip **MPP (Media Process Platform)**，实现 H.264 硬件编码。
 *   **UDP 低延迟传输**：通过原始 UDP Socket 发送 H.264 码流，极大减少传输开销。
 
@@ -25,17 +26,27 @@
 
 ```text
 .
-├── CMakeLists.txt      # 构建脚本
-├── inc/                # 头文件
-│   ├── dma_utils.h     # DMA Buffer 管理
-│   ├── mpp_encoder.h   # MPP 编码封装类
-│   └── v4l2_utils.h    # V4L2 操作封装
-├── src/                # 源代码
-│   ├── dma_utils.cpp   # 实现 dma-heap 内存分配
-│   ├── main.cpp        # 主程序入口 (采集->RGA->MPP->UDP)
-│   ├── mpp_encoder.cpp # MPP 编码实现
-│   └── v4l2_utils.c    # V4L2 采集实现
-└── README.md           # 说明文档
+├── CMakeLists.txt                  # CMake文件
+├── inc/                            # 头文件
+│   ├── dma_utils.h                 # DMA Buffer 管理
+│   ├── mpp_encoder.h               # MPP 编码封装类
+│   └── v4l2_utils.h                # V4L2 操作封装
+├── src/                            # 源代码
+│   ├── main.cpp                    # 主程序入口 (采集->RGA->MPP->UDP)
+│   ├── postprocess.cc              # 官方：后处理程序
+│   ├── yolo_detector.cpp           # 目标检测封装类
+│   └── mpp_encoder.cpp             # MPP 编码实现
+├── utils/                          # 辅助文件
+│   ├── dma_utils.cpp               # 实现 dma-heap 内存分配
+│   └── v4l2_utils.c                # V4L2 采集实现
+├── python_demo/                    # python demo
+│   ├── yolov5_rknn.py              # rknn的python demo
+│   └── yolov5_ROS.py               # rknn集成ROS demo
+├── model/                          # 模型文件
+│   ├── yolov5s.rknn                # rknn转化模型文件
+│   └── coco_80_labels_list.txt     # 模型标签文件
+├── .gitignore                      # git辅助文件
+└── README.md                       # 说明文档
 ```
 
 ## ⚙️ 编译与构建
@@ -77,7 +88,7 @@ ffplay -f h264 udp://0.0.0.0:8888     -fflags nobuffer     -flags low_delay     
 修改 `src/main.cpp` 中的目标 IP，将其指向你的 PC：
 
 ```cpp
-#define DEST_IP   "192.168.1.xxx" // <--- 修改为你 PC 的 IP 地址
+#define DEST_IP   "192.168.13.xxx" // <--- 修改为你 PC 的 IP 地址
 #define DEST_PORT 8888            // <--- 确保没有被防火墙拦截
 ```
 
@@ -87,7 +98,7 @@ ffplay -f h264 udp://0.0.0.0:8888     -fflags nobuffer     -flags low_delay     
 
 ```bash
 cd build
-sudo ./auv_vision /dev/video0
+sudo ./bricsbot_vision
 ```
 
 如果一切正常，你应该能在 PC 上看到来自摄像头的实时画面，且延迟极低。
