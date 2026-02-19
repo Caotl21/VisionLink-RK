@@ -35,6 +35,7 @@
 #define DEST_PORT           8888                // 目标端口号
 #define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
+#define _USE_OPENCV_DRAW    0                   // 定义该宏以启用OPENCV绘制检测框
 
 struct UdpContext{
     int socket_fd;
@@ -164,13 +165,15 @@ int main(int argc, char *argv[]){
         std::vector<DetectResult> results;
         int ret = detector.inference((unsigned char*)npu_buf.vaddr, results);
 
+#if _USE_OPENCV_DRAW
+        // 使用OpenCV将推理结果绘制到原图上
         dma_sync_cpu(npu_buf.fd);
 
         if(ret==0){
             if(!results.empty()){
                 printf("=============================================================\n");
                 for(const auto&res:results){
-                    printf("Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
+                    printf("OpenCV: Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
                            res.id, res.name.c_str(), res.confidence,
                            res.box.left, res.box.top, res.box.right, res.box.bottom);
                     cv::rectangle(orig_img, cv::Point(res.box.left, res.box.top), cv::Point(res.box.right, res.box.bottom), cv::Scalar(0, 255, 0), 3);
@@ -182,8 +185,33 @@ int main(int argc, char *argv[]){
         }
 
         dma_sync_device(npu_buf.fd);
+#else
+        // 使用RGA将推理结果绘制到原图上
+        if(ret==0 && !results.empty()){
+            printf("=============================================================\n");
+            
+            uint32_t color = 0xFF00FF00; // 绿色（若颜色异常再换通道顺序）
+            int thickness = 3;
 
-        // 将推理结果绘制到原图上
+            for(const auto&res:results){
+                printf("RGA: Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
+                       res.id, res.name.c_str(), res.confidence,
+                       res.box.left, res.box.top, res.box.right, res.box.bottom);
+                im_rect rect;
+                rect.x = res.box.left;
+                rect.y = res.box.top;
+                rect.width = res.box.right - res.box.left;
+                rect.height = res.box.bottom - res.box.top;
+                // 绘制矩形框
+                status = imrectangle(infer_img, rect, color, thickness, 1); //同步
+                if (status != IM_STATUS_SUCCESS) {
+                    printf("RGA rectangle Error: %s\n", imStrError(status));
+                }
+
+            }
+        }
+#endif 
+
         status = imresize(infer_img, dst_img);
         
         if (status != IM_STATUS_SUCCESS) {
