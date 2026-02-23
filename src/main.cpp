@@ -5,6 +5,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <thread>
+#include <memory>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
@@ -28,6 +30,11 @@
 #include "v4l2_utils.h"
 #include "yolo_detector.h"
 
+// RTSP库
+#include "xop/RtspServer.h"
+#include "xop/H264Source.h"
+
+
 #define VIDEO_DEVICE        "/dev/video0"       // 摄像头设备路径
 #define DST_WIDTH           640                 // RGA 输出宽度
 #define DST_HEIGHT          640                 // RGA 输出高度
@@ -35,7 +42,9 @@
 #define DEST_PORT           8888                // 目标端口号
 #define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
-#define _USE_OPENCV_DRAW    0                   // 定义该宏以启用OPENCV绘制检测框
+#define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
+#define _USE_PURE_UDP       0                   // 定义该宏以启用裸UDP分发
+
 
 struct UdpContext{
     int socket_fd;
@@ -91,11 +100,39 @@ int main(int argc, char *argv[]){
     v4l2_capability_query(v4l2_ctx.fd);
 #endif
 
+#if _USE_PURE_UDP
     UdpContext udp_ctx;
     if(udp_init(&udp_ctx, DEST_IP, DEST_PORT) < 0){
         printf("Failed to initialize UDP\n");
         return -1;
     }
+#else
+    // 创建事件循环
+    std::shared_ptr<xop::EventLoop> event_loop(new xop::EventLoop());
+    // 2. 创建 RTSP Server，监听 8554 端口
+    std::shared_ptr<xop::RtspServer> server = xop::RtspServer::Create(event_loop.get());
+    if (!server->Start("0.0.0.0", 8554)) {
+        printf("RTSP Server start failed!\n");
+        return -1;
+    }
+    // 3. 创建一个叫 "live" 的流媒体会话 (推流地址就是 rtsp://ip:8554/live)
+    xop::MediaSession* session = xop::MediaSession::CreateNew("live");
+    // 4. 添加 H.264 视频源通道
+    session->AddSource(xop::channel_0, xop::H264Source::CreateNew());
+    // session->AddNotifyConnectedCallback([] (xop::MediaSessionId sessionId, std::string peer_ip, uint16_t peer_port){
+    //     printf("有 PC 客户端连接进来了: %s\n", peer_ip.c_str());
+    // });
+    xop::MediaSessionId session_id = server->AddSession(session);
+
+    // 5. 启动一个后台线程让 RTSP 服务器运行 (处理网络请求，不卡主线程)
+    std::thread rtsp_thread([event_loop]() {
+        event_loop->Loop();
+    });
+    rtsp_thread.detach(); // 分离线程，让它自己在后台跑
+
+    printf("RTSP Server is running at rtsp://192.168.13.11:8554/live\n");
+
+#endif
 
     // 申请一块DMA内存给MPP用 MPP需要NV12 大小 W*H*1.5
     size_t mpp_size = DST_HEIGHT * DST_WIDTH * 3 / 2;
@@ -203,7 +240,7 @@ int main(int argc, char *argv[]){
                 rect.width = res.box.right - res.box.left;
                 rect.height = res.box.bottom - res.box.top;
                 // 绘制矩形框
-                status = imrectangle(infer_img, rect, color, thickness, 1); //同步
+                status = imrectangle(infer_img, rect, color, thickness); //同步
                 if (status != IM_STATUS_SUCCESS) {
                     printf("RGA rectangle Error: %s\n", imStrError(status));
                 }
@@ -225,11 +262,27 @@ int main(int argc, char *argv[]){
         size_t h264_len = 0;
 
         if(encoder.encode(mpp_buf.fd, &h264_data, &h264_len) == 0){
+#if _USE_PURE_UDP
             if(h264_len > 0){
                 // 网络发送代码
                 printf("Frame %d encoded: %zu bytes\n", frame_cnt++, h264_len);
                 udp_send(&udp_ctx, h264_data, h264_len);
             }
+#else
+            if (h264_len > 0) {
+            xop::AVFrame videoFrame = {0};
+            videoFrame.type = 0; // 0 代表视频，1 代表音频
+            videoFrame.size = h264_len;
+            videoFrame.timestamp = xop::H264Source::GetTimestamp(); // 自动打时间戳
+            
+            // 拷贝数据给 RTSP 库 (它会自动进行 RTP 分包和发送)
+            videoFrame.buffer.reset(new uint8_t[videoFrame.size]);
+            memcpy(videoFrame.buffer.get(), h264_data, videoFrame.size);
+            
+            // 把这一帧推送到 "live" 这个通道
+            server->PushFrame(session_id, xop::channel_0, videoFrame);
+            }
+#endif
         } else{
             printf("MPP Failed to encode frame\n");
         }
@@ -243,7 +296,7 @@ int main(int argc, char *argv[]){
     free_dma_buffer(&mpp_buf);
 
     v4l2_deinit(&v4l2_ctx);
-    close(udp_ctx.socket_fd);
+    //close(udp_ctx.socket_fd);
     return 0;
 
 }
