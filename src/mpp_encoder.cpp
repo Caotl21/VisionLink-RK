@@ -71,10 +71,7 @@ int MppEncoder::init(int width, int height, int fps){
     mpp_enc_cfg_set_s32(cfg, "prep:ver_stride", height);
     mpp_enc_cfg_set_s32(cfg, "prep:format", MPP_FMT_YUV420SP); // RGA 输出的格式
 
-    mpp_enc_cfg_set_s32(cfg, "prep:spspps_idr", 1);
-
     mpp_enc_cfg_set_s32(cfg, "rc:mode", MPP_ENC_RC_MODE_CBR); // 固定码率:适合网络传输
-    mpp_enc_cfg_set_s32(cfg, "enc:profile", 66); // H.264 Main Profile
 
     // 目标码率3Mbps，最大码率4.5Mbps，最小码率1.5Mbps
     int bps = 3 * 1024 * 1024;
@@ -97,19 +94,10 @@ int MppEncoder::init(int width, int height, int fps){
         return -1;
     }
 
-    // 强制每个IDR带头
-    MppEncHeaderMode header_mode = MPP_ENC_HEADER_MODE_EACH_IDR;
-    ret = mpi->control(ctx, MPP_ENC_SET_HEADER_MODE, &header_mode);
-    if (ret != MPP_OK) {
-        fprintf(stderr, "mpp control MPP_ENC_SET_HEADER_MODE failed\n");
-        mpp_enc_cfg_deinit(cfg);
-        return -1;
-    }
-
     // 取一份全局 header 缓存，输出时可 prepend
     codec_header.clear();
     MppPacket extra_pkt = NULL;
-    ret = mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &extra_pkt);
+    ret = mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &extra_pkt);  // 获取编码器全局头信息，通常包含 SPS/PPS 数据
     if (ret == MPP_OK && extra_pkt) {
         size_t len = mpp_packet_get_length(extra_pkt);
         void *ptr = mpp_packet_get_pos(extra_pkt);
@@ -187,13 +175,6 @@ int MppEncoder::encode(int dma_fd, void **out_data, size_t *out_len){
 
     // [修复] 循环取包并拼接
     size_t total = 0;
-    unsigned char *buf = NULL;
-
-    // 先拼接缓存的 SPS/PPS，提高中途加入恢复概率
-    if (!codec_header.empty() && codec_header.size() < packet_buf_size) {
-        memcpy(packet_buf, codec_header.data(), codec_header.size());
-        total = codec_header.size();
-    }
 
     while (1) {
         MppPacket pkt = NULL;
@@ -202,10 +183,38 @@ int MppEncoder::encode(int dma_fd, void **out_data, size_t *out_len){
 
         // 获取包数据和长度
         size_t len = mpp_packet_get_length(pkt);
-        void *ptr = mpp_packet_get_pos(pkt);
+        unsigned char *ptr = (unsigned char *)mpp_packet_get_pos(pkt);
+        uint32_t flag = mpp_packet_get_flag(pkt);
+
+        bool is_idr = false;
+        if (ptr && len > 4) {
+            // 扫描前 256 个字节寻找 IDR 帧。因为 SPS/PPS/SEI 加起来通常只有几十个字节
+            size_t search_max = (len > 256) ? 256 : len;
+            for (size_t i = 0; i < search_max - 3; i++) {
+                // 只要找到 00 00 01 起始码，就能兼容 3字节 和 4字节 起始码的情况
+                // H.264 国际标准 Annex B 规定 NALU 以 00 00 01 或 00 00 00 01 起始
+                if (ptr[i] == 0x00 && ptr[i+1] == 0x00 && ptr[i+2] == 0x01) {
+                    int nalu_type = ptr[i+3] & 0x1F; // NALU 类型: 低5位
+                    if (nalu_type == 5) { // 找到 IDR 帧
+                        is_idr = true;
+                        break; 
+                    }
+                }
+            }
+            // 调试可以打开这个日志，看看每个包的类型和长度
+            // printf("Got packet: len=%zu, is_idr=%d\n", len, is_idr);
+        }
+
+        // 如果是IDR帧，优先拼接SPS/PPS
+        if (is_idr && total == 0 && !codec_header.empty()){
+            if (total + codec_header.size() < packet_buf_size) {
+                memcpy(packet_buf, codec_header.data(), codec_header.size());
+                total += codec_header.size();
+            }
+        }
 
         // 安全检查：防止内存越界，确保有足够空间存放新数据
-        if (total + len < packet_buf_size) {
+        if (total + len <= packet_buf_size) {
             memcpy(packet_buf + total, ptr, len);
             total += len;
         }
@@ -234,10 +243,6 @@ void MppEncoder::deinit(){
         ctx = NULL;
         mpi = NULL;
     }
-    //if(buf_grp){
-    //    mpp_buffer_group_put(buf_grp);
-    //    buf_grp = NULL;
-    //}
     if(packet_buf){
         free(packet_buf);
         packet_buf = NULL;

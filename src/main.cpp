@@ -42,8 +42,8 @@
 #define DEST_PORT           8888                // 目标端口号
 #define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
-#define _USE_OPENCV_DRAW    0                   // 定义该宏以启用OPENCV绘制检测框
-#define _USE_PURE_UDP       1                   // 定义该宏以启用裸UDP分发
+#define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
+#define _USE_PURE_UDP       0                   // 定义该宏以启用裸UDP分发
 
 
 struct UdpContext{
@@ -228,7 +228,7 @@ int main(int argc, char *argv[]){
             printf("=============================================================\n");
             
             uint32_t color = 0xFF00FF00; // 绿色（若颜色异常再换通道顺序）
-            int thickness = 3;
+            int thickness = 2;
 
             for(const auto&res:results){
                 printf("RGA: Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
