@@ -52,13 +52,6 @@ int MppEncoder::init(int width, int height, int fps){
         return -1;
     }
 
-    // 分配一块外部DMA内存给MPP使用，MPP会从这个内存中读取输入帧数据
-    ret = mpp_buffer_group_get(&buf_grp, MPP_BUFFER_TYPE_EXT_DMA, MPP_BUFFER_INTERNAL, NULL, __FUNCTION__);//EXT_DMA表示输入帧数据来自外部DMA内存，MPP_BUFFER_INTERNAL表示由MPP内部管理内存
-    if (ret != MPP_OK) {
-        fprintf(stderr, "mpp_buffer_group_get failed\n");
-        return -1;
-    }
-
     // 预分配拼包内存：2MB
     packet_buf_size = 2 * 1024 * 1024;
     packet_buf = (char*)malloc(packet_buf_size);
@@ -70,14 +63,19 @@ int MppEncoder::init(int width, int height, int fps){
     // 设置编码参数
     MppEncCfg cfg;
     mpp_enc_cfg_init(&cfg);
+    mpi->control(ctx, MPP_ENC_GET_CFG, cfg);
 
     mpp_enc_cfg_set_s32(cfg, "prep:width", width);
     mpp_enc_cfg_set_s32(cfg, "prep:height", height);
     mpp_enc_cfg_set_s32(cfg, "prep:hor_stride", width);
     mpp_enc_cfg_set_s32(cfg, "prep:ver_stride", height);
     mpp_enc_cfg_set_s32(cfg, "prep:format", MPP_FMT_YUV420SP); // RGA 输出的格式
+
+    mpp_enc_cfg_set_s32(cfg, "prep:spspps_idr", 1);
+
     mpp_enc_cfg_set_s32(cfg, "rc:mode", MPP_ENC_RC_MODE_CBR); // 固定码率:适合网络传输
-    mpp_enc_cfg_set_s32(cfg, "enc:profile", 66); // 66 代表 Baseline Profile
+    mpp_enc_cfg_set_s32(cfg, "enc:profile", 66); // H.264 Main Profile
+
     // 目标码率3Mbps，最大码率4.5Mbps，最小码率1.5Mbps
     int bps = 3 * 1024 * 1024;
     mpp_enc_cfg_set_s32(cfg, "rc:bps_target", bps);
@@ -95,7 +93,31 @@ int MppEncoder::init(int width, int height, int fps){
     ret = mpi->control(ctx, MPP_ENC_SET_CFG, cfg);
     if (ret != MPP_OK) {
         fprintf(stderr, "mpp control MPP_ENC_SET_CFG failed\n");
+        mpp_enc_cfg_deinit(cfg);
         return -1;
+    }
+
+    // 强制每个IDR带头
+    MppEncHeaderMode header_mode = MPP_ENC_HEADER_MODE_EACH_IDR;
+    ret = mpi->control(ctx, MPP_ENC_SET_HEADER_MODE, &header_mode);
+    if (ret != MPP_OK) {
+        fprintf(stderr, "mpp control MPP_ENC_SET_HEADER_MODE failed\n");
+        mpp_enc_cfg_deinit(cfg);
+        return -1;
+    }
+
+    // 取一份全局 header 缓存，输出时可 prepend
+    codec_header.clear();
+    MppPacket extra_pkt = NULL;
+    ret = mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &extra_pkt);
+    if (ret == MPP_OK && extra_pkt) {
+        size_t len = mpp_packet_get_length(extra_pkt);
+        void *ptr = mpp_packet_get_pos(extra_pkt);
+        if (ptr && len > 0) {
+            codec_header.resize(len);
+            memcpy(codec_header.data(), ptr, len);
+        }
+        mpp_packet_deinit(&extra_pkt);
     }
 
     // 配置应用后释放cfg占据的系统内存
@@ -114,6 +136,9 @@ int MppEncoder::init(int width, int height, int fps){
  *          调用者需要负责释放 out_data 指向的内存。      
  */
 int MppEncoder::encode(int dma_fd, void **out_data, size_t *out_len){
+    if (!out_data || !out_len) return -1;
+    *out_data = NULL;
+    *out_len = 0;
 
     MPP_RET ret = MPP_OK;
 
@@ -164,6 +189,12 @@ int MppEncoder::encode(int dma_fd, void **out_data, size_t *out_len){
     size_t total = 0;
     unsigned char *buf = NULL;
 
+    // 先拼接缓存的 SPS/PPS，提高中途加入恢复概率
+    if (!codec_header.empty() && codec_header.size() < packet_buf_size) {
+        memcpy(packet_buf, codec_header.data(), codec_header.size());
+        total = codec_header.size();
+    }
+
     while (1) {
         MppPacket pkt = NULL;
         ret = mpi->encode_get_packet(ctx, &pkt);
@@ -203,10 +234,10 @@ void MppEncoder::deinit(){
         ctx = NULL;
         mpi = NULL;
     }
-    if(buf_grp){
-        mpp_buffer_group_put(buf_grp);
-        buf_grp = NULL;
-    }
+    //if(buf_grp){
+    //    mpp_buffer_group_put(buf_grp);
+    //    buf_grp = NULL;
+    //}
     if(packet_buf){
         free(packet_buf);
         packet_buf = NULL;

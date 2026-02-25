@@ -42,8 +42,8 @@
 #define DEST_PORT           8888                // 目标端口号
 #define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
-#define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
-#define _USE_PURE_UDP       0                   // 定义该宏以启用裸UDP分发
+#define _USE_OPENCV_DRAW    0                   // 定义该宏以启用OPENCV绘制检测框
+#define _USE_PURE_UDP       1                   // 定义该宏以启用裸UDP分发
 
 
 struct UdpContext{
@@ -270,17 +270,17 @@ int main(int argc, char *argv[]){
             }
 #else
             if (h264_len > 0) {
-            xop::AVFrame videoFrame = {0};
-            videoFrame.type = 0; // 0 代表视频，1 代表音频
-            videoFrame.size = h264_len;
-            videoFrame.timestamp = xop::H264Source::GetTimestamp(); // 自动打时间戳
-            
-            // 拷贝数据给 RTSP 库 (它会自动进行 RTP 分包和发送)
-            videoFrame.buffer.reset(new uint8_t[videoFrame.size]);
-            memcpy(videoFrame.buffer.get(), h264_data, videoFrame.size);
-            
-            // 把这一帧推送到 "live" 这个通道
-            server->PushFrame(session_id, xop::channel_0, videoFrame);
+                xop::AVFrame videoFrame = {0};
+                videoFrame.type = 0; // 0 代表视频，1 代表音频
+                videoFrame.size = h264_len;
+                videoFrame.timestamp = xop::H264Source::GetTimestamp(); // 自动打时间戳
+                
+                // 拷贝数据给 RTSP 库 (它会自动进行 RTP 分包和发送)
+                videoFrame.buffer.reset(new uint8_t[videoFrame.size]);
+                memcpy(videoFrame.buffer.get(), h264_data, videoFrame.size);
+                
+                // 把这一帧推送到 "live" 这个通道
+                server->PushFrame(session_id, xop::channel_0, videoFrame);
             }
 #endif
         } else{
