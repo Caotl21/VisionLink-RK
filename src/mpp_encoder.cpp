@@ -84,7 +84,8 @@ int MppEncoder::init(int width, int height, int fps){
     mpp_enc_cfg_set_s32(cfg, "rc:fps_in_denorm", 1);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_num", fps);
     mpp_enc_cfg_set_s32(cfg, "rc:fps_out_denorm", 1);
-    mpp_enc_cfg_set_s32(cfg, "rc:gop", fps); // 每1秒一个关键帧
+    mpp_enc_cfg_set_s32(cfg, "rc:gop", fps/2);
+    mpp_enc_cfg_set_s32(cfg, "h264:profile", 66); 
 
     // 应用配置
     ret = mpi->control(ctx, MPP_ENC_SET_CFG, cfg);

@@ -22,18 +22,17 @@
 #include "rga.h"
 #include "dma_utils.h"
 #include "mpp_encoder.h"
-#include "v4l2_utils.h"
 #include "yolo_detector.h"
 
 // RTSP库
 #include "xop/RtspServer.h"
 #include "xop/H264Source.h"
 
-// 统计用时
+// 辅助函数
 #include "count_utils.h"
-
-// UDP裸发辅助函数
 #include "udp_utils.h"
+#include "v4l2_utils.h"
+#include "frame_pool.h"
 
 
 #define VIDEO_DEVICE        "/dev/video0"       // 摄像头设备路径
@@ -148,6 +147,9 @@ int main(int argc, char *argv[]){
     // 调试用：Mat对象指向npu_buf虚拟地址
     cv::Mat orig_img(DST_HEIGHT, DST_WIDTH, CV_8UC3, npu_buf.vaddr);
     cv::Mat show_img(DST_HEIGHT, DST_WIDTH, CV_8UC3);
+
+    // rtsp内存池创建
+    FramePool rtsp_pool(2 * 1024 * 1024, 6); // 2MB块大小，预分配6块
 
     while(1)
     {
@@ -269,13 +271,14 @@ int main(int argc, char *argv[]){
                 videoFrame.type = 0; // 0 代表视频，1 代表音频
                 videoFrame.size = h264_len;
                 videoFrame.timestamp = xop::H264Source::GetTimestamp(); // 自动打时间戳
-                
+                int64_t tp0 = now_us();
                 // 拷贝数据给 RTSP 库 (它会自动进行 RTP 分包和发送)
-                videoFrame.buffer.reset(new uint8_t[videoFrame.size]);
+                //videoFrame.buffer.reset(new uint8_t[videoFrame.size]);
+                videoFrame.buffer = rtsp_pool.acquire(videoFrame.size); // 从内存池获取一块内存
                 memcpy(videoFrame.buffer.get(), h264_data, videoFrame.size);
+                //printf("Frame %d encoded: %zu bytes\n", frame_cnt++, h264_len);
                 
                 // 把这一帧推送到 "live" 这个通道
-                int64_t tp0 = now_us();
                 server->PushFrame(session_id, xop::channel_0, videoFrame);
                 int64_t tp1 = now_us();
                 s_push.add(tp1 - tp0);
