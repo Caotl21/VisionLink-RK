@@ -45,6 +45,27 @@
 #define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
 #define _USE_PURE_UDP       0                   // 定义该宏以启用裸UDP分发
 
+static inline int64_t now_us() {
+    using namespace std::chrono;
+    return duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+struct StageStat {
+    const char* name;
+    int64_t sum_us = 0;
+    int64_t max_us = 0;
+    int cnt = 0;
+
+    StageStat() : name("") {}
+    explicit StageStat(const char* n) : name(n) {}
+    
+    void add(int64_t us) {
+        sum_us += us;
+        max_us = std::max(max_us, us);
+        cnt++;
+    }
+    void reset() { sum_us = 0; max_us = 0; cnt = 0; }
+};
 
 struct UdpContext{
     int socket_fd;
@@ -87,6 +108,15 @@ void udp_send(UdpContext *ctx, void *data, size_t len){
 int main(int argc, char *argv[]){
 
     int ret;
+
+    StageStat s_get{"v4l2_get"};
+    StageStat s_rga1{"rga_yuyv2rgb"};
+    StageStat s_npu{"npu_infer"};
+    StageStat s_rga2{"rga_rgb2nv12"};
+    StageStat s_enc{"mpp_encode"};
+    StageStat s_push{"rtsp_push"};
+    StageStat s_total{"total"};
+    int stat_frames = 0;
 
     // 初始化V4L2，打开摄像头设备，设置分辨率和帧率，申请缓冲区并映射到用户空间
     V4L2Context v4l2_ctx;
@@ -181,16 +211,26 @@ int main(int argc, char *argv[]){
     {
         static int frame_cnt = 0;
 
+        int64_t t0 = now_us();
+
+        int64_t tg0 = now_us();
         // 出队
         unsigned char *src_ptr = v4l2_get_frame(&v4l2_ctx);
+
+        int64_t tg1 = now_us();
+        s_get.add(tg1 - tg0);
+
         if(!src_ptr){
             printf("Failed to get frame from V4L2\n");
             continue;
         }
-        
+
+        int64_t tr10 = now_us();
         // RGA 进行格式转换和缩放，输入 src_ptr (YUYV422)，输出 infer_img (RGB888)
         src_img = wrapbuffer_virtualaddr(src_ptr, SRC_WIDTH, SRC_HEIGHT, RK_FORMAT_YUYV_422);
         IM_STATUS status = imresize(src_img, infer_img);
+        int64_t tr11 = now_us();
+        s_rga1.add(tr11 - tr10);
         
         if (status != IM_STATUS_SUCCESS) {
             printf("RGA Error: %s\n", imStrError(status));
@@ -200,11 +240,14 @@ int main(int argc, char *argv[]){
 
         // 执行推理
         std::vector<DetectResult> results;
+        int64_t tn0 = now_us();
         int ret = detector.inference((unsigned char*)npu_buf.vaddr, results);
+        int64_t tn1 = now_us();
+        s_npu.add(tn1 - tn0);
 
 #if _USE_OPENCV_DRAW
         // 使用OpenCV将推理结果绘制到原图上
-        dma_sync_cpu(npu_buf.fd);
+        /*dma_sync_cpu(npu_buf.fd);
 
         if(ret==0){
             if(!results.empty()){
@@ -221,7 +264,7 @@ int main(int argc, char *argv[]){
             printf("RKNN inference failed with error code: %d\n", ret);
         }
 
-        dma_sync_device(npu_buf.fd);
+        dma_sync_device(npu_buf.fd);*/
 #else
         // 使用RGA将推理结果绘制到原图上
         if(ret==0 && !results.empty()){
@@ -248,8 +291,10 @@ int main(int argc, char *argv[]){
             }
         }
 #endif 
-
+        int64_t tr20 = now_us();
         status = imresize(infer_img, dst_img);
+        int64_t tr21 = now_us();
+        s_rga2.add(tr21 - tr20);
         
         if (status != IM_STATUS_SUCCESS) {
             printf("RGA Error: %s\n", imStrError(status));
@@ -261,7 +306,12 @@ int main(int argc, char *argv[]){
         void *h264_data = NULL;
         size_t h264_len = 0;
 
-        if(encoder.encode(mpp_buf.fd, &h264_data, &h264_len) == 0){
+        int64_t te0 = now_us();
+        int enc_ok = encoder.encode(mpp_buf.fd, &h264_data, &h264_len) == 0;
+        int64_t te1 = now_us();
+        s_enc.add(te1 - te0);
+
+        if(enc_ok){
 #if _USE_PURE_UDP
             if(h264_len > 0){
                 // 网络发送代码
@@ -280,7 +330,10 @@ int main(int argc, char *argv[]){
                 memcpy(videoFrame.buffer.get(), h264_data, videoFrame.size);
                 
                 // 把这一帧推送到 "live" 这个通道
+                int64_t tp0 = now_us();
                 server->PushFrame(session_id, xop::channel_0, videoFrame);
+                int64_t tp1 = now_us();
+                s_push.add(tp1 - tp0);
             }
 #endif
         } else{
@@ -289,6 +342,24 @@ int main(int argc, char *argv[]){
 
         // 入队
         v4l2_release_frame(&v4l2_ctx);
+
+        int64_t t1 = now_us();
+        s_total.add(t1 - t0);
+
+        stat_frames++;
+        if (stat_frames >= 60) {
+            auto pr = [](const StageStat& s){
+                double avg = s.cnt ? (double)s.sum_us / s.cnt / 1000.0 : 0.0;
+                double mx  = (double)s.max_us / 1000.0;
+                printf("[LAT] %-12s avg=%7.2f ms max=%7.2f ms\n", s.name, avg, mx);
+            };
+            pr(s_get); pr(s_rga1); pr(s_npu); pr(s_rga2); pr(s_enc); pr(s_push); pr(s_total);
+            printf("--------------------------------------------------\n");
+
+            s_get.reset(); s_rga1.reset(); s_npu.reset(); s_rga2.reset();
+            s_enc.reset(); s_push.reset(); s_total.reset();
+            stat_frames = 0;
+        }
 
     }
 
