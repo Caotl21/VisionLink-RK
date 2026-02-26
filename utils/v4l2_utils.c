@@ -1,5 +1,26 @@
+#define _POSIX_C_SOURCE 200809L // 为了使用 clock_gettime 和 struct timespec
 #include "../inc/v4l2_utils.h"
+#include <time.h>
+#include <stdint.h>
+#include <inttypes.h>
 
+static const char* ts_src_to_str(uint32_t flags)
+{
+#ifdef V4L2_BUF_FLAG_TSTAMP_SRC_MASK
+    switch (flags & V4L2_BUF_FLAG_TSTAMP_SRC_MASK) {
+    #ifdef V4L2_BUF_FLAG_TSTAMP_SRC_EOF
+    case V4L2_BUF_FLAG_TSTAMP_SRC_EOF: return "EOF";
+    #endif
+    #ifdef V4L2_BUF_FLAG_TSTAMP_SRC_SOE
+    case V4L2_BUF_FLAG_TSTAMP_SRC_SOE: return "SOE";
+    #endif
+    default: return "UNKNOWN";
+    }
+#else
+    (void)flags;
+    return "N/A";
+#endif
+}
 
 /**
  *   @brief   查询视频设备能力，列出支持的像素格式、分辨率和帧率
@@ -96,6 +117,17 @@ int v4l2_init(V4L2Context *ctx, const char *device) {
         return -1;
     }
 
+    // 读回实际生效格式
+    memset(&fmt, 0, sizeof(fmt));
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(ctx->fd, VIDIOC_G_FMT, &fmt) == 0) {
+        printf("实际格式: %ux%u fourcc=%.4s\n",
+               fmt.fmt.pix.width, fmt.fmt.pix.height,
+               (char*)&fmt.fmt.pix.pixelformat);
+    } else {
+        perror("Getting Pixel Format");
+    }
+
     // 设置帧率参数
     struct v4l2_streamparm streamparm = {0};
     streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -109,11 +141,18 @@ int v4l2_init(V4L2Context *ctx, const char *device) {
         }
     }
 
-    printf("设置视频格式成功: width=%d, height=%d\n", fmt.fmt.pix.width, fmt.fmt.pix.height);
+    // 读回实际生效帧率
+    memset(&streamparm, 0, sizeof(streamparm));
+    streamparm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(ctx->fd, VIDIOC_G_PARM, &streamparm) < 0){
+        perror("Getting Frame Rate");
+    }
+
+    printf("设置视频格式成功: width=%d, height=%d, FPS=%u/%u fps\n", fmt.fmt.pix.width, fmt.fmt.pix.height, streamparm.parm.capture.timeperframe.denominator, streamparm.parm.capture.timeperframe.numerator);
 
     // 申请Buffer
     struct v4l2_requestbuffers req = {0};
-    req.count = 1; // 请求1个缓冲区
+    req.count = BUF_COUNT; // 请求1个缓冲区
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP; // 内存映射方式
     if (ioctl(ctx->fd, VIDIOC_REQBUFS, &req) < 0) {
@@ -157,7 +196,7 @@ int v4l2_init(V4L2Context *ctx, const char *device) {
 }
 
 /** 
- * @brief   获取一帧视频数据
+ * @brief   获取一帧视频数据并打印相关时间戳信息
  * @param   ctx V4L2 上下文结构体
  * @return  成功返回指向帧数据的指针，失败返回 NULL
  * @remark  调用该函数会从视频设备出队一个缓冲区，并返回指向该缓冲区数据的指针。
@@ -172,6 +211,21 @@ unsigned char* v4l2_get_frame(V4L2Context *ctx){
         perror("Dequeue Buffer");
         return NULL;
     }
+
+    /*struct timespec ts_now;
+    clock_gettime(CLOCK_MONOTONIC, &ts_now);
+    int64_t now_us = (int64_t)ts_now.tv_sec * 1000000LL + ts_now.tv_nsec / 1000;
+    // 获取Linux 内核驱动给当前帧打上的时间戳 在DMA将该帧写入内存时执行
+    int64_t cap_us = (int64_t)ctx->buffer.timestamp.tv_sec * 1000000LL + ctx->buffer.timestamp.tv_usec;
+    int is_mono = !!(ctx->buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC);
+    
+    printf("[CAP] seq=%u flags=0x%08x ts_src=%s ts_clock=%s dq_lag=%.2f ms\n",
+           ctx->buffer.sequence,
+           ctx->buffer.flags,
+           ts_src_to_str(ctx->buffer.flags),
+           is_mono ? "MONOTONIC" : "REALTIME",
+           (now_us - cap_us) / 1000.0);*/
+
     return ctx->mptr[ctx->buffer.index];
 }
 
@@ -201,7 +255,7 @@ void v4l2_deinit(V4L2Context *ctx){
     printf("视频采集已停止\n");
 
     // 释放映射的缓冲区
-    for(int i=0;i<4;i++){
+    for(int i=0;i<BUF_COUNT;i++){
         munmap(ctx->mptr[i], ctx->mlength[i]);
     }
 

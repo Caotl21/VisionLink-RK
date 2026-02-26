@@ -31,6 +31,7 @@ add_executable(bricsbot_vision
     utils/dma_utils.cpp
     src/mpp_encoder.cpp
     utils/v4l2_utils.c
+    utils/udp_utils.c
     src/yolo_detector.cpp
     src/postprocess.cc
     ${RTSP_SOURCES}

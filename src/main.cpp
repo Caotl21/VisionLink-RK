@@ -14,11 +14,6 @@
 #include <linux/dma-buf.h>
 #include <linux/dma-heap.h>
 
-// socket相关
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
 // opencv相关
 #include <opencv2/opencv.hpp>
 
@@ -34,75 +29,21 @@
 #include "xop/RtspServer.h"
 #include "xop/H264Source.h"
 
+// 统计用时
+#include "count_utils.h"
+
+// UDP裸发辅助函数
+#include "udp_utils.h"
+
 
 #define VIDEO_DEVICE        "/dev/video0"       // 摄像头设备路径
 #define DST_WIDTH           640                 // RGA 输出宽度
 #define DST_HEIGHT          640                 // RGA 输出高度
 #define DEST_IP             "192.168.13.10"     // 目标IP地址
 #define DEST_PORT           8888                // 目标端口号
-#define UDP_MTU             1024                // UDP分片大小，通常小于1500字节以避免IP层分片
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
 #define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
 #define _USE_PURE_UDP       0                   // 定义该宏以启用裸UDP分发
-
-static inline int64_t now_us() {
-    using namespace std::chrono;
-    return duration_cast<microseconds>(steady_clock::now().time_since_epoch()).count();
-}
-
-struct StageStat {
-    const char* name;
-    int64_t sum_us = 0;
-    int64_t max_us = 0;
-    int cnt = 0;
-
-    StageStat() : name("") {}
-    explicit StageStat(const char* n) : name(n) {}
-    
-    void add(int64_t us) {
-        sum_us += us;
-        max_us = std::max(max_us, us);
-        cnt++;
-    }
-    void reset() { sum_us = 0; max_us = 0; cnt = 0; }
-};
-
-struct UdpContext{
-    int socket_fd;
-    struct sockaddr_in dest_addr;
-};
-
-int udp_init(UdpContext *ctx, const char *dest_ip, int port){
-    ctx->socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (ctx->socket_fd < 0) {
-        perror("Socket creation failed");
-        return -1;
-    }
-
-    memset(&ctx->dest_addr, 0, sizeof(ctx->dest_addr));
-    ctx->dest_addr.sin_family = AF_INET;
-    ctx->dest_addr.sin_port = htons(port);
-    ctx->dest_addr.sin_addr.s_addr = inet_addr(dest_ip);
-
-    int sock_buf_size = 32 * 1024; // 32KB，足够放一个 I 帧，但放不下更多
-    if (setsockopt(ctx->socket_fd, SOL_SOCKET, SO_SNDBUF, &sock_buf_size, sizeof(sock_buf_size)) < 0) {
-        perror("设置发送缓冲区失败");
-    }
-
-    return 0;
-}
-
-void udp_send(UdpContext *ctx, void *data, size_t len){
-     uint8_t *send_ptr = (uint8_t*)data;
-     size_t remain = len;
-
-     while(remain > 0){
-         size_t chunk = (remain > UDP_MTU) ? UDP_MTU : remain;
-         sendto(ctx->socket_fd, send_ptr, chunk, 0 , (struct sockaddr *)&ctx->dest_addr, sizeof(ctx->dest_addr));
-         send_ptr += chunk;
-         remain -= chunk;
-     }
-}
 
 
 int main(int argc, char *argv[]){
@@ -112,6 +53,7 @@ int main(int argc, char *argv[]){
     StageStat s_get{"v4l2_get"};
     StageStat s_rga1{"rga_yuyv2rgb"};
     StageStat s_npu{"npu_infer"};
+    StageStat s_opencv{"draw_box"};
     StageStat s_rga2{"rga_rgb2nv12"};
     StageStat s_enc{"mpp_encode"};
     StageStat s_push{"rtsp_push"};
@@ -247,24 +189,27 @@ int main(int argc, char *argv[]){
 
 #if _USE_OPENCV_DRAW
         // 使用OpenCV将推理结果绘制到原图上
-        /*dma_sync_cpu(npu_buf.fd);
+        dma_sync_cpu(npu_buf.fd);
 
         if(ret==0){
             if(!results.empty()){
+                int64_t td0 = now_us();
                 printf("=============================================================\n");
                 for(const auto&res:results){
-                    printf("OpenCV: Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
-                           res.id, res.name.c_str(), res.confidence,
-                           res.box.left, res.box.top, res.box.right, res.box.bottom);
+                    //printf("OpenCV: Detected: ID=%d, Name=%s, Confidence=%.2f, Box=(%d, %d, %d, %d)\n",
+                    //       res.id, res.name.c_str(), res.confidence,
+                    //       res.box.left, res.box.top, res.box.right, res.box.bottom);
                     cv::rectangle(orig_img, cv::Point(res.box.left, res.box.top), cv::Point(res.box.right, res.box.bottom), cv::Scalar(0, 255, 0), 3);
                     cv::putText(orig_img, res.name, cv::Point(res.box.left, res.box.top + 12), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 255, 255));
                 }
+                int64_t td1 = now_us();
+                s_opencv.add(td1 - td0);
             }
         }else{
             printf("RKNN inference failed with error code: %d\n", ret);
         }
 
-        dma_sync_device(npu_buf.fd);*/
+        dma_sync_device(npu_buf.fd);
 #else
         // 使用RGA将推理结果绘制到原图上
         if(ret==0 && !results.empty()){
@@ -348,15 +293,16 @@ int main(int argc, char *argv[]){
 
         stat_frames++;
         if (stat_frames >= 60) {
+            printf("--------------------------------------------------\n");
             auto pr = [](const StageStat& s){
                 double avg = s.cnt ? (double)s.sum_us / s.cnt / 1000.0 : 0.0;
                 double mx  = (double)s.max_us / 1000.0;
                 printf("[LAT] %-12s avg=%7.2f ms max=%7.2f ms\n", s.name, avg, mx);
             };
-            pr(s_get); pr(s_rga1); pr(s_npu); pr(s_rga2); pr(s_enc); pr(s_push); pr(s_total);
+            pr(s_get); pr(s_rga1); pr(s_npu); pr(s_opencv); pr(s_rga2); pr(s_enc); pr(s_push); pr(s_total);
             printf("--------------------------------------------------\n");
 
-            s_get.reset(); s_rga1.reset(); s_npu.reset(); s_rga2.reset();
+            s_get.reset(); s_rga1.reset(); s_npu.reset(); s_opencv.reset(); s_rga2.reset();
             s_enc.reset(); s_push.reset(); s_total.reset();
             stat_frames = 0;
         }

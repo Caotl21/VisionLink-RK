@@ -16,9 +16,9 @@
 extern "C" {
 #endif
 
-#define BUF_COUNT       4
-#define SRC_WIDTH       800
-#define SRC_HEIGHT      600
+#define BUF_COUNT       3
+#define SRC_WIDTH       640
+#define SRC_HEIGHT      480
 #define FPS             30
 
 typedef struct V4L2Context {
