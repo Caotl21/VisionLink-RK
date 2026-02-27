@@ -83,11 +83,11 @@ int RKNNDetector::init(const std::string& model_path){
     }
 
     // 强行绑定 NPU 0, 1, 2 三个核心协同工作
-    rknn_core_mask core_mask = RKNN_NPU_CORE_0_1_2;
+    /*rknn_core_mask core_mask = RKNN_NPU_CORE_0_1_2;
     ret = rknn_set_core_mask(ctx, core_mask);
     if(ret < 0){
         printf("Warning: set NPU core mask failed\n");
-    }
+    }*/
 
     // 获取版本信息
     rknn_sdk_version version;
