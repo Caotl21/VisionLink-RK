@@ -14,6 +14,14 @@
 #include <linux/dma-buf.h>
 #include <linux/dma-heap.h>
 
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+
 // opencv相关
 #include <opencv2/opencv.hpp>
 
@@ -42,8 +50,58 @@
 #define DEST_PORT           8888                // 目标端口号
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
 #define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
-#define _USE_PURE_UDP       0                   // 定义该宏以启用裸UDP分发
+#define _USE_PURE_UDP       1                   // 定义该宏以启用裸UDP分发
 
+bool set_cpu_governor_performance(const std::vector<int>& target_cores) {
+    bool success = true;
+    for (int cpu_id : target_cores) {
+        std::string path = "/sys/devices/system/cpu/cpu" + std::to_string(cpu_id) + "/cpufreq/scaling_governor";
+        std::ofstream file(path);
+        
+        if (file.is_open()) {
+            file << "performance";
+            file.close();
+            printf("[CPU] 成功将 CPU %d 设置为 performance 模式\n", cpu_id);
+        } else {
+            printf("[CPU] 错误：无法打开 %s。请确保程序以 root 权限运行！\n", path.c_str());
+            success = false;
+        }
+    }
+    return success;
+}
+
+bool bind_thread_to_cores(const std::vector<int>& target_cores) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset); // 清空 CPU 集合
+
+    // 将目标核心添加到集合中
+    for (int cpu_id : target_cores) {
+        CPU_SET(cpu_id, &cpuset);
+    }
+
+    // 获取当前线程句柄
+    pthread_t current_thread = pthread_self();
+
+    // 设置线程亲和性
+    int rc = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+    if (rc != 0) {
+        printf("[CPU] 错误：绑定 CPU 核心失败，错误码：%d\n", rc);
+        return false;
+    }
+
+    // 验证是否绑定成功
+    CPU_ZERO(&cpuset);
+    pthread_getaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+    printf("[CPU] 当前线程已绑定到核心: ");
+    for (int j = 0; j < CPU_SETSIZE; j++) {
+        if (CPU_ISSET(j, &cpuset)) {
+            printf("%d ", j);
+        }
+    }
+    printf("\n");
+
+    return true;
+}
 
 int main(int argc, char *argv[]){
 
@@ -58,6 +116,12 @@ int main(int argc, char *argv[]){
     StageStat s_push{"rtsp_push"};
     StageStat s_total{"total"};
     int stat_frames = 0;
+
+    std::vector<int> big_cores = {4, 5};
+
+    set_cpu_governor_performance(big_cores);
+
+    //bind_thread_to_cores(big_cores);
 
     // 初始化V4L2，打开摄像头设备，设置分辨率和帧率，申请缓冲区并映射到用户空间
     V4L2Context v4l2_ctx;

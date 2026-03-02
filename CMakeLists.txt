@@ -4,6 +4,7 @@ project(auv_vision_demo)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_BUILD_TYPE Debug)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 find_package(OpenCV REQUIRED)

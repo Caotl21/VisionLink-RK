@@ -9,7 +9,8 @@ public:
     FramePool(size_t block_size, size_t prealloc)
         : block_size_(block_size) {
         for (size_t i = 0; i < prealloc; ++i) {
-            free_.push_back(new uint8_t[block_size_]);
+            uint8_t* ptr = new uint8_t[block_size_];
+            free_.push_back(ptr);
         }
     }
 
@@ -17,9 +18,14 @@ public:
         for (auto p : free_) delete[] p;
     }
 
+    // 如果需要的大小超过 block_size_，则直接分配一块新的内存，并不放回池中
     std::shared_ptr<uint8_t> acquire(size_t need) {
         if (need > block_size_) {
-            return std::shared_ptr<uint8_t>(new uint8_t[need], std::default_delete<uint8_t[]>());
+            auto sp = std::shared_ptr<uint8_t>(
+                new uint8_t[need],
+                std::default_delete<uint8_t[]>()
+            );
+            return sp;
         }
 
         uint8_t* p = nullptr;
@@ -32,10 +38,13 @@ public:
         }
         if (!p) p = new uint8_t[block_size_];
 
-        return std::shared_ptr<uint8_t>(p, [this](uint8_t* ptr) {
+        auto deleter = [this](uint8_t* ptr) {
             std::lock_guard<std::mutex> lk(m_);
             free_.push_back(ptr);
-        });
+        };
+
+        auto sp = std::shared_ptr<uint8_t>(p, deleter);
+        return sp;
     }
 
 private:
