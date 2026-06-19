@@ -118,29 +118,14 @@ int MppEncoder::init(int width, int height, int fps){
         return true;
     };
 
+    printf("[MPP] using minimal encoder config for compatibility test\n");
+    fflush(stdout);
     if (!set_s32("codec:type", MPP_VIDEO_CodingAVC) ||
         !set_s32("prep:width", width) ||
         !set_s32("prep:height", height) ||
         !set_s32("prep:hor_stride", hor_stride) ||
         !set_s32("prep:ver_stride", ver_stride) ||
-        !set_s32("prep:format", MPP_FMT_YUV420SP) || // RGA 输出的格式
-        !set_s32("rc:mode", MPP_ENC_RC_MODE_CBR)) { // 固定码率:适合网络传输
-        mpp_enc_cfg_deinit(cfg);
-        return -1;
-    }
-
-    // 目标码率3Mbps，最大码率4.5Mbps，最小码率1.5Mbps
-    int bps = 3 * 1024 * 1024;
-    if (!set_s32("rc:bps_target", bps) ||
-        !set_s32("rc:bps_max", bps * 3 / 2) ||
-        !set_s32("rc:bps_min", bps / 2) ||
-        !set_s32("rc:fps_in_flex", 0) ||
-        !set_s32("rc:fps_in_num", fps) ||
-        !set_s32("rc:fps_in_denorm", 1) ||
-        !set_s32("rc:fps_out_num", fps) ||
-        !set_s32("rc:fps_out_denorm", 1) ||
-        !set_s32("rc:gop", fps / 2) ||
-        !set_s32("h264:profile", 66)) {
+        !set_s32("prep:format", MPP_FMT_YUV420SP)) { // RGA 输出的格式
         mpp_enc_cfg_deinit(cfg);
         return -1;
     }

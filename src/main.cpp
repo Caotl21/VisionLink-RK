@@ -51,6 +51,7 @@
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
 #define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
 #define _USE_PURE_UDP       1                   // 定义该宏以启用裸UDP分发
+#define _USE_FFMPEG_ENCODER 1                   // MPP异常时使用FFmpeg软件编码推流
 
 bool set_cpu_governor_performance(const std::vector<int>& target_cores) {
     bool success = true;
@@ -103,6 +104,46 @@ bool bind_thread_to_cores(const std::vector<int>& target_cores) {
     return true;
 }
 
+#if _USE_FFMPEG_ENCODER
+FILE *start_ffmpeg_encoder()
+{
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd),
+             "ffmpeg -hide_banner -loglevel warning "
+             "-f rawvideo -pix_fmt rgb24 -video_size %dx%d -framerate 30 -i - "
+             "-an -c:v libx264 -preset ultrafast -tune zerolatency "
+             "-g 15 -keyint_min 15 -bf 0 -pix_fmt yuv420p "
+             "-f h264 'udp://%s:%d?pkt_size=1024'",
+             DST_WIDTH, DST_HEIGHT, DEST_IP, DEST_PORT);
+
+    printf("[FFmpeg] software encoder command:\n%s\n", cmd);
+    fflush(stdout);
+
+    FILE *pipe = popen(cmd, "w");
+    if (!pipe) {
+        perror("[FFmpeg] popen failed");
+        return NULL;
+    }
+    return pipe;
+}
+
+bool write_ffmpeg_frame(FILE *pipe, const void *data, size_t len)
+{
+    if (!pipe || !data || len == 0) {
+        return false;
+    }
+
+    size_t written = fwrite(data, 1, len, pipe);
+    if (written != len) {
+        perror("[FFmpeg] fwrite frame failed");
+        return false;
+    }
+
+    fflush(pipe);
+    return true;
+}
+#endif
+
 int main(int argc, char *argv[]){
 
     int ret;
@@ -135,7 +176,9 @@ int main(int argc, char *argv[]){
     v4l2_capability_query(v4l2_ctx.fd);
 #endif
 
-#if _USE_PURE_UDP
+#if _USE_FFMPEG_ENCODER
+    printf("[FFmpeg] FFmpeg handles H.264 UDP output, skip built-in UDP/RTSP sender init\n");
+#elif _USE_PURE_UDP
     UdpContext udp_ctx;
     if(udp_init(&udp_ctx, DEST_IP, DEST_PORT) < 0){
         printf("Failed to initialize UDP\n");
@@ -169,6 +212,7 @@ int main(int argc, char *argv[]){
 
 #endif
 
+#if !_USE_FFMPEG_ENCODER
     // 申请一块DMA内存给MPP用 MPP需要NV12 大小 W*H*1.5
     size_t mpp_size = DST_HEIGHT * DST_WIDTH * 3 / 2;
     struct DmaBuffer mpp_buf = {-1, NULL, 0};
@@ -176,13 +220,16 @@ int main(int argc, char *argv[]){
         perror("MPP buffer alloc_dma_buffer failed");
         return -1;
     }
+#endif
 
     // 申请一块内存给NPU用 NPU需要RGB888 大小 W*H*3
     size_t npu_size = DST_HEIGHT * DST_WIDTH * 3;
     struct DmaBuffer npu_buf = {-1, NULL, 0};
     if (alloc_dma_buffer(npu_size, &npu_buf)<0) {
         perror("NPU buffer alloc_dma_buffer failed");
+#if !_USE_FFMPEG_ENCODER
         free_dma_buffer(&mpp_buf);
+#endif
         return -1;
     }
 
@@ -191,9 +238,18 @@ int main(int argc, char *argv[]){
     memset(&src_img, 0, sizeof(src_img));
     memset(&infer_img, 0, sizeof(infer_img));
     memset(&dst_img, 0, sizeof(dst_img));
+#if !_USE_FFMPEG_ENCODER
     dst_img = wrapbuffer_fd(mpp_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_YCbCr_420_SP);
+#endif
     infer_img = wrapbuffer_fd(npu_buf.fd, DST_WIDTH, DST_HEIGHT, RK_FORMAT_RGB_888);
 
+#if _USE_FFMPEG_ENCODER
+    FILE *ffmpeg_pipe = start_ffmpeg_encoder();
+    if(!ffmpeg_pipe){
+        free_dma_buffer(&npu_buf);
+        return -1;
+    }
+#else
     MppEncoder encoder;
     // 初始化摄像头分辨率 30fps
     if(encoder.init(DST_WIDTH,DST_HEIGHT,30) < 0){
@@ -202,12 +258,18 @@ int main(int argc, char *argv[]){
         free_dma_buffer(&mpp_buf);
         return -1;
     }
+#endif
 
     RKNNDetector detector;
     if(detector.init("../model/yolov5s-640-640.rknn") < 0){
         printf("Failed to initialize RKNNDetector\n");
+#if _USE_FFMPEG_ENCODER
+        pclose(ffmpeg_pipe);
+        free_dma_buffer(&npu_buf);
+#else
         free_dma_buffer(&npu_buf);
         free_dma_buffer(&mpp_buf);
+#endif
         return -1;
     }
 
@@ -305,6 +367,22 @@ int main(int argc, char *argv[]){
             }
         }
 #endif 
+#if _USE_FFMPEG_ENCODER
+        int64_t te0 = now_us();
+        int enc_ok = write_ffmpeg_frame(ffmpeg_pipe, npu_buf.vaddr, npu_size);
+        int64_t te1 = now_us();
+        s_enc.add(te1 - te0);
+
+        if(enc_ok){
+            if((frame_cnt++ % 30) == 0){
+                printf("Frame %d sent to FFmpeg software encoder\n", frame_cnt);
+            }
+        } else {
+            printf("FFmpeg software encoder failed, please check whether ffmpeg/libx264 is installed\n");
+            v4l2_release_frame(&v4l2_ctx);
+            break;
+        }
+#else
         int64_t tr20 = now_us();
         status = imresize(infer_img, dst_img);
         int64_t tr21 = now_us();
@@ -354,6 +432,7 @@ int main(int argc, char *argv[]){
         } else{
             printf("MPP Failed to encode frame\n");
         }
+#endif
 
         // 入队
         v4l2_release_frame(&v4l2_ctx);
@@ -379,8 +458,14 @@ int main(int argc, char *argv[]){
 
     }
 
-    // 释放 RGA 目标缓冲区
+    // 释放资源
+#if _USE_FFMPEG_ENCODER
+    pclose(ffmpeg_pipe);
+    free_dma_buffer(&npu_buf);
+#else
     free_dma_buffer(&mpp_buf);
+    free_dma_buffer(&npu_buf);
+#endif
 
     v4l2_deinit(&v4l2_ctx);
     //close(udp_ctx.socket_fd);
