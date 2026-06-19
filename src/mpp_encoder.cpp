@@ -80,6 +80,16 @@ int MppEncoder::init(int width, int height, int fps){
     printf("[MPP] mpp_init ok\n");
     fflush(stdout);
 
+    printf("[MPP] create internal buffer group...\n");
+    fflush(stdout);
+    ret = mpp_buffer_group_get_internal(&buf_grp, MPP_BUFFER_TYPE_DRM);
+    if (ret != MPP_OK || !buf_grp) {
+        fprintf(stderr, "mpp_buffer_group_get_internal failed, ret=%d\n", ret);
+        return -1;
+    }
+    printf("[MPP] internal buffer group ok, group=%p\n", buf_grp);
+    fflush(stdout);
+
     // 预分配拼包内存：2MB
     packet_buf_size = 2 * 1024 * 1024;
     packet_buf = (char*)malloc(packet_buf_size);
@@ -146,6 +156,17 @@ int MppEncoder::init(int width, int height, int fps){
     }
 
     // 应用配置
+    printf("[MPP] MPP_ENC_SET_EXT_BUF_GROUP...\n");
+    fflush(stdout);
+    ret = mpi->control(ctx, MPP_ENC_SET_EXT_BUF_GROUP, buf_grp);
+    if (ret != MPP_OK) {
+        fprintf(stderr, "mpp control MPP_ENC_SET_EXT_BUF_GROUP failed, ret=%d\n", ret);
+        mpp_enc_cfg_deinit(cfg);
+        return -1;
+    }
+    printf("[MPP] MPP_ENC_SET_EXT_BUF_GROUP ok\n");
+    fflush(stdout);
+
     printf("[MPP] MPP_ENC_SET_CFG...\n");
     fflush(stdout);
     ret = mpi->control(ctx, MPP_ENC_SET_CFG, cfg);
@@ -315,5 +336,9 @@ void MppEncoder::deinit(){
         free(packet_buf);
         packet_buf = NULL;
         packet_buf_size = 0;
+    }
+    if(buf_grp){
+        mpp_buffer_group_put(buf_grp);
+        buf_grp = NULL;
     }
 }
