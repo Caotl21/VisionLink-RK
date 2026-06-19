@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <rockchip/rk_mpi.h>
 #include <rockchip/mpp_buffer.h>
+#include <vector>
 
 class MppEncoder {
 public:
@@ -36,6 +37,9 @@ private:
     // 拼包缓冲区临时变量
     char *packet_buf;
     size_t packet_buf_size;
+
+    // 缓存编码头SPS/PPS
+    std::vector<unsigned char> codec_header;
 };
 
 #endif // MPP_ENCODER_H

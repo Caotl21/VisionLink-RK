@@ -4,6 +4,7 @@ project(auv_vision_demo)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_BUILD_TYPE Debug)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 find_package(OpenCV REQUIRED)
@@ -17,14 +18,24 @@ find_library(MPP_LIB rockchip_mpp)
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/rknpu2/include")
 find_library(RKNN_LIB rknnrt PATHS ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/rknpu2/lib NO_DEFAULT_PATH)
 
+include_directories(${CMAKE_SOURCE_DIR}/3rdparty/RtspServer/src/3rdpart)
+
+include_directories(${CMAKE_SOURCE_DIR}/3rdparty/RtspServer/src)
+file(GLOB_RECURSE RTSP_SOURCES 
+    "${CMAKE_SOURCE_DIR}/3rdparty/RtspServer/src/xop/*.cpp"
+    "${CMAKE_SOURCE_DIR}/3rdparty/RtspServer/src/net/*.cpp"
+)
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/inc)
 add_executable(bricsbot_vision 
     src/main.cpp
     utils/dma_utils.cpp
     src/mpp_encoder.cpp
     utils/v4l2_utils.c
+    utils/udp_utils.c
     src/yolo_detector.cpp
     src/postprocess.cc
+    ${RTSP_SOURCES}
 )
 
 target_link_libraries(bricsbot_vision
