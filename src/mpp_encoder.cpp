@@ -184,22 +184,11 @@ int MppEncoder::init(int width, int height, int fps){
     printf("[MPP] MPP_ENC_SET_CFG ok\n");
     fflush(stdout);
 
-    // 取一份全局 header 缓存，输出时可 prepend
+    // Some Rockchip MPP 1.5.x builds crash inside MPP_ENC_GET_EXTRA_INFO.
+    // It is only used to cache SPS/PPS for prepending to IDR frames, so keep it
+    // disabled on this platform and let the encoder output packets directly.
     codec_header.clear();
-    MppPacket extra_pkt = NULL;
-    printf("[MPP] MPP_ENC_GET_EXTRA_INFO...\n");
-    fflush(stdout);
-    ret = mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &extra_pkt);  // 获取编码器全局头信息，通常包含 SPS/PPS 数据
-    if (ret == MPP_OK && extra_pkt) {
-        size_t len = mpp_packet_get_length(extra_pkt);
-        void *ptr = mpp_packet_get_pos(extra_pkt);
-        if (ptr && len > 0) {
-            codec_header.resize(len);
-            memcpy(codec_header.data(), ptr, len);
-        }
-        mpp_packet_deinit(&extra_pkt);
-    }
-    printf("[MPP] MPP_ENC_GET_EXTRA_INFO done, ret=%d\n", ret);
+    printf("[MPP] skip MPP_ENC_GET_EXTRA_INFO on this MPP version\n");
     fflush(stdout);
 
     // 配置应用后释放cfg占据的系统内存
