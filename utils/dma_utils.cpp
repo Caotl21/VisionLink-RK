@@ -18,6 +18,14 @@
  *   @return  0 成功，-1 失败
 **/
 int alloc_dma_buffer(size_t size, struct DmaBuffer *buf) {
+    if (!buf) {
+        return -1;
+    }
+
+    buf->fd = -1;
+    buf->vaddr = NULL;
+    buf->size = 0;
+
     // 优先尝试 CMA，其次是 Uncached System Heap
     const char *heap_paths[] = {
         "/dev/dma_heap/linux,cma",
@@ -71,12 +79,19 @@ int alloc_dma_buffer(size_t size, struct DmaBuffer *buf) {
  *   @return  无
 **/
 void free_dma_buffer(struct DmaBuffer *buf) {
+    if (!buf) {
+        return;
+    }
+
     if (buf->vaddr && buf->vaddr != MAP_FAILED) {
         munmap(buf->vaddr, buf->size);
     }
     if (buf->fd >= 0) {
         close(buf->fd);
     }
+    buf->fd = -1;
+    buf->vaddr = NULL;
+    buf->size = 0;
 }
 
 // 辅助函数：同步 Cache

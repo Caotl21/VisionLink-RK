@@ -171,16 +171,15 @@ int main(int argc, char *argv[]){
 
     // 申请一块DMA内存给MPP用 MPP需要NV12 大小 W*H*1.5
     size_t mpp_size = DST_HEIGHT * DST_WIDTH * 3 / 2;
-    struct DmaBuffer mpp_buf;
+    struct DmaBuffer mpp_buf = {-1, NULL, 0};
     if(alloc_dma_buffer(mpp_size, &mpp_buf) < 0) {
-        free_dma_buffer(&mpp_buf);
         perror("MPP buffer alloc_dma_buffer failed");
         return -1;
     }
 
     // 申请一块内存给NPU用 NPU需要RGB888 大小 W*H*3
     size_t npu_size = DST_HEIGHT * DST_WIDTH * 3;
-    struct DmaBuffer npu_buf;
+    struct DmaBuffer npu_buf = {-1, NULL, 0};
     if (alloc_dma_buffer(npu_size, &npu_buf)<0) {
         perror("NPU buffer alloc_dma_buffer failed");
         free_dma_buffer(&mpp_buf);
@@ -197,14 +196,18 @@ int main(int argc, char *argv[]){
 
     MppEncoder encoder;
     // 初始化摄像头分辨率 30fps
-    if(encoder.init(DST_HEIGHT,DST_WIDTH,30) < 0){
+    if(encoder.init(DST_WIDTH,DST_HEIGHT,30) < 0){
         printf("MPP Failed to initialize encoder\n");
+        free_dma_buffer(&npu_buf);
+        free_dma_buffer(&mpp_buf);
         return -1;
     }
 
     RKNNDetector detector;
     if(detector.init("../model/yolov5s-640-640.rknn") < 0){
         printf("Failed to initialize RKNNDetector\n");
+        free_dma_buffer(&npu_buf);
+        free_dma_buffer(&mpp_buf);
         return -1;
     }
 
@@ -384,4 +387,3 @@ int main(int argc, char *argv[]){
     return 0;
 
 }
-

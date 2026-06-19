@@ -14,7 +14,14 @@
 */
 
 
-MppEncoder::MppEncoder() : ctx(NULL), mpi(NULL), buf_grp(NULL) {
+MppEncoder::MppEncoder()
+    : width(0),
+      height(0),
+      ctx(NULL),
+      mpi(NULL),
+      buf_grp(NULL),
+      packet_buf(NULL),
+      packet_buf_size(0) {
 }
 
 MppEncoder::~MppEncoder() {
@@ -39,16 +46,20 @@ int MppEncoder::init(int width, int height, int fps){
     MPP_RET ret = MPP_OK;
 
     // 创建MPP上下文：编码器 H.264
+    printf("Initializing MPP encoder: %dx%d @ %dfps...\n", width, height, fps);
     ret = mpp_create(&ctx, &mpi);
     if (ret != MPP_OK) {
-        fprintf(stderr, "mpp_create failed\n");
+        fprintf(stderr, "mpp_create failed, ret=%d\n", ret);
         return -1;
     }
 
     // 分配具体任务：编码 ENC , 编码格式 H.264
     ret = mpp_init(ctx, MPP_CTX_ENC, MPP_VIDEO_CodingAVC);
     if (ret != MPP_OK) {
-        fprintf(stderr, "mpp_init failed\n");
+        fprintf(stderr, "mpp_init failed, ret=%d\n", ret);
+        mpp_destroy(ctx);
+        ctx = NULL;
+        mpi = NULL;
         return -1;
     }
 
@@ -61,9 +72,19 @@ int MppEncoder::init(int width, int height, int fps){
     }
 
     // 设置编码参数
-    MppEncCfg cfg;
-    mpp_enc_cfg_init(&cfg);
-    mpi->control(ctx, MPP_ENC_GET_CFG, cfg);
+    MppEncCfg cfg = NULL;
+    ret = mpp_enc_cfg_init(&cfg);
+    if (ret != MPP_OK || !cfg) {
+        fprintf(stderr, "mpp_enc_cfg_init failed, ret=%d\n", ret);
+        return -1;
+    }
+
+    ret = mpi->control(ctx, MPP_ENC_GET_CFG, cfg);
+    if (ret != MPP_OK) {
+        fprintf(stderr, "mpp control MPP_ENC_GET_CFG failed, ret=%d\n", ret);
+        mpp_enc_cfg_deinit(cfg);
+        return -1;
+    }
 
     mpp_enc_cfg_set_s32(cfg, "prep:width", width);
     mpp_enc_cfg_set_s32(cfg, "prep:height", height);
@@ -90,7 +111,7 @@ int MppEncoder::init(int width, int height, int fps){
     // 应用配置
     ret = mpi->control(ctx, MPP_ENC_SET_CFG, cfg);
     if (ret != MPP_OK) {
-        fprintf(stderr, "mpp control MPP_ENC_SET_CFG failed\n");
+        fprintf(stderr, "mpp control MPP_ENC_SET_CFG failed, ret=%d\n", ret);
         mpp_enc_cfg_deinit(cfg);
         return -1;
     }
@@ -112,6 +133,7 @@ int MppEncoder::init(int width, int height, int fps){
     // 配置应用后释放cfg占据的系统内存
     mpp_enc_cfg_deinit(cfg);
 
+    printf("MPP encoder initialized successfully\n");
     return 0;
 }
 
