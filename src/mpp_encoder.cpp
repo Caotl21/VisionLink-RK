@@ -47,13 +47,21 @@ int MppEncoder::init(int width, int height, int fps){
 
     // 创建MPP上下文：编码器 H.264
     printf("Initializing MPP encoder: %dx%d @ %dfps...\n", width, height, fps);
+    fflush(stdout);
+
+    printf("[MPP] mpp_create...\n");
+    fflush(stdout);
     ret = mpp_create(&ctx, &mpi);
     if (ret != MPP_OK) {
         fprintf(stderr, "mpp_create failed, ret=%d\n", ret);
         return -1;
     }
+    printf("[MPP] mpp_create ok, ctx=%p, mpi=%p\n", ctx, mpi);
+    fflush(stdout);
 
     // 分配具体任务：编码 ENC , 编码格式 H.264
+    printf("[MPP] mpp_init encoder...\n");
+    fflush(stdout);
     ret = mpp_init(ctx, MPP_CTX_ENC, MPP_VIDEO_CodingAVC);
     if (ret != MPP_OK) {
         fprintf(stderr, "mpp_init failed, ret=%d\n", ret);
@@ -62,6 +70,8 @@ int MppEncoder::init(int width, int height, int fps){
         mpi = NULL;
         return -1;
     }
+    printf("[MPP] mpp_init ok\n");
+    fflush(stdout);
 
     // 预分配拼包内存：2MB
     packet_buf_size = 2 * 1024 * 1024;
@@ -78,13 +88,19 @@ int MppEncoder::init(int width, int height, int fps){
         fprintf(stderr, "mpp_enc_cfg_init failed, ret=%d\n", ret);
         return -1;
     }
+    printf("[MPP] mpp_enc_cfg_init ok\n");
+    fflush(stdout);
 
+    printf("[MPP] MPP_ENC_GET_CFG...\n");
+    fflush(stdout);
     ret = mpi->control(ctx, MPP_ENC_GET_CFG, cfg);
     if (ret != MPP_OK) {
         fprintf(stderr, "mpp control MPP_ENC_GET_CFG failed, ret=%d\n", ret);
         mpp_enc_cfg_deinit(cfg);
         return -1;
     }
+    printf("[MPP] MPP_ENC_GET_CFG ok\n");
+    fflush(stdout);
 
     mpp_enc_cfg_set_s32(cfg, "prep:width", width);
     mpp_enc_cfg_set_s32(cfg, "prep:height", height);
@@ -109,16 +125,22 @@ int MppEncoder::init(int width, int height, int fps){
     mpp_enc_cfg_set_s32(cfg, "h264:profile", 66); 
 
     // 应用配置
+    printf("[MPP] MPP_ENC_SET_CFG...\n");
+    fflush(stdout);
     ret = mpi->control(ctx, MPP_ENC_SET_CFG, cfg);
     if (ret != MPP_OK) {
         fprintf(stderr, "mpp control MPP_ENC_SET_CFG failed, ret=%d\n", ret);
         mpp_enc_cfg_deinit(cfg);
         return -1;
     }
+    printf("[MPP] MPP_ENC_SET_CFG ok\n");
+    fflush(stdout);
 
     // 取一份全局 header 缓存，输出时可 prepend
     codec_header.clear();
     MppPacket extra_pkt = NULL;
+    printf("[MPP] MPP_ENC_GET_EXTRA_INFO...\n");
+    fflush(stdout);
     ret = mpi->control(ctx, MPP_ENC_GET_EXTRA_INFO, &extra_pkt);  // 获取编码器全局头信息，通常包含 SPS/PPS 数据
     if (ret == MPP_OK && extra_pkt) {
         size_t len = mpp_packet_get_length(extra_pkt);
@@ -129,6 +151,8 @@ int MppEncoder::init(int width, int height, int fps){
         }
         mpp_packet_deinit(&extra_pkt);
     }
+    printf("[MPP] MPP_ENC_GET_EXTRA_INFO done, ret=%d\n", ret);
+    fflush(stdout);
 
     // 配置应用后释放cfg占据的系统内存
     mpp_enc_cfg_deinit(cfg);
