@@ -18,6 +18,9 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <cstdint>
+#include <sstream>
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
@@ -48,10 +51,67 @@
 #define DST_HEIGHT          640                 // RGA 输出高度
 #define DEST_IP             "192.168.13.10"     // 目标IP地址
 #define DEST_PORT           8888                // 目标端口号
+#define DETECTION_PORT      8890                // 检测结果UDP端口号
 #define _Capability_Query   0                   // 定义该宏以启用设备能力查询功能
 #define _USE_OPENCV_DRAW    1                   // 定义该宏以启用OPENCV绘制检测框
 #define _USE_PURE_UDP       1                   // 定义该宏以启用裸UDP分发
 #define _USE_FFMPEG_ENCODER 1                   // MPP异常时使用FFmpeg软件编码推流
+#define _USE_DETECTION_UDP  1                   // 定义该宏以启用检测结果UDP JSON发送
+
+static std::string json_escape(const std::string& value)
+{
+    std::ostringstream out;
+    for (char c : value) {
+        switch (c) {
+        case '\\': out << "\\\\"; break;
+        case '"': out << "\\\""; break;
+        case '\n': out << "\\n"; break;
+        case '\r': out << "\\r"; break;
+        case '\t': out << "\\t"; break;
+        default: out << c; break;
+        }
+    }
+    return out.str();
+}
+
+static int64_t wall_time_us()
+{
+    using namespace std::chrono;
+    return duration_cast<microseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+static std::string build_detection_json(uint64_t frame_id, int64_t stamp_us,
+                                        const std::vector<DetectResult>& results)
+{
+    std::ostringstream json;
+    json << "{";
+    json << "\"stamp_us\":" << stamp_us << ",";
+    json << "\"frame_id\":" << frame_id << ",";
+    json << "\"width\":" << DST_WIDTH << ",";
+    json << "\"height\":" << DST_HEIGHT << ",";
+    json << "\"detections\":[";
+
+    for (size_t i = 0; i < results.size(); ++i) {
+        const auto& res = results[i];
+        if (i > 0) {
+            json << ",";
+        }
+
+        json << "{";
+        json << "\"id\":" << res.id << ",";
+        json << "\"name\":\"" << json_escape(res.name) << "\",";
+        json << "\"confidence\":" << res.confidence << ",";
+        json << "\"box\":["
+             << res.box.left << ","
+             << res.box.top << ","
+             << res.box.right << ","
+             << res.box.bottom << "]";
+        json << "}";
+    }
+
+    json << "]}";
+    return json.str();
+}
 
 bool set_cpu_governor_performance(const std::vector<int>& target_cores) {
     bool success = true;
@@ -212,6 +272,15 @@ int main(int argc, char *argv[]){
 
 #endif
 
+#if _USE_DETECTION_UDP
+    UdpContext detection_udp_ctx;
+    if(udp_init(&detection_udp_ctx, DEST_IP, DETECTION_PORT) < 0){
+        printf("Failed to initialize detection UDP\n");
+        return -1;
+    }
+    printf("[DetectionUDP] detection results -> udp://%s:%d\n", DEST_IP, DETECTION_PORT);
+#endif
+
 #if !_USE_FFMPEG_ENCODER
     // 申请一块DMA内存给MPP用 MPP需要NV12 大小 W*H*1.5
     size_t mpp_size = DST_HEIGHT * DST_WIDTH * 3 / 2;
@@ -283,6 +352,7 @@ int main(int argc, char *argv[]){
     while(1)
     {
         static int frame_cnt = 0;
+        static uint64_t detection_frame_id = 0;
 
         int64_t t0 = now_us();
 
@@ -317,6 +387,16 @@ int main(int argc, char *argv[]){
         int ret = detector.inference((unsigned char*)npu_buf.vaddr, results);
         int64_t tn1 = now_us();
         s_npu.add(tn1 - tn0);
+
+#if _USE_DETECTION_UDP
+        if(ret == 0){
+            detection_frame_id++;
+            std::string detection_json = build_detection_json(detection_frame_id, wall_time_us(), results);
+            if(udp_send_datagram(&detection_udp_ctx, detection_json.data(), detection_json.size()) < 0){
+                printf("[DetectionUDP] failed to send detection JSON\n");
+            }
+        }
+#endif
 
 #if _USE_OPENCV_DRAW
         // 使用OpenCV将推理结果绘制到原图上
@@ -465,6 +545,10 @@ int main(int argc, char *argv[]){
 #else
     free_dma_buffer(&mpp_buf);
     free_dma_buffer(&npu_buf);
+#endif
+
+#if _USE_DETECTION_UDP
+    close(detection_udp_ctx.socket_fd);
 #endif
 
     v4l2_deinit(&v4l2_ctx);

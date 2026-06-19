@@ -49,3 +49,23 @@ void udp_send(UdpContext *ctx, void *data, size_t len){
          remain -= chunk;
      }
 }
+
+/**
+ * @brief   通过UDP发送单个完整数据报。
+ * @remark  检测结果JSON需要接收端一次recvfrom拿到完整内容，因此不能像视频流一样应用层分片。
+**/
+int udp_send_datagram(UdpContext *ctx, const void *data, size_t len){
+    if (!ctx || ctx->socket_fd < 0 || !data || len == 0) {
+        return -1;
+    }
+
+    ssize_t sent = sendto(ctx->socket_fd, data, len, 0,
+                          (struct sockaddr *)&ctx->dest_addr,
+                          sizeof(ctx->dest_addr));
+    if (sent < 0) {
+        perror("UDP datagram send failed");
+        return -1;
+    }
+
+    return (sent == (ssize_t)len) ? 0 : -1;
+}

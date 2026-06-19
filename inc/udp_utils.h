@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"{
@@ -17,6 +18,7 @@ typedef struct UdpContext{
 
 int udp_init(UdpContext *ctx, const char *dest_ip, int port);
 void udp_send(UdpContext *ctx, void *data, size_t len);
+int udp_send_datagram(UdpContext *ctx, const void *data, size_t len);
 
 #ifdef __cplusplus
 }

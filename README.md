@@ -103,12 +103,49 @@ sudo ./bricsbot_vision
 
 如果一切正常，你应该能在 PC 上看到来自摄像头的实时画面，且延迟极低。
 
+### 4. 检测结果 UDP -> ROS
+
+程序会保留原有视频流，同时把检测结果以 JSON 数据报发送到 PC 的 `8890` 端口：
+
+```text
+RK板: 检测结果 -> 192.168.13.10:8890/udp
+PC或地面站容器: detection_udp_bridge.py -> /vision/detections
+```
+
+JSON 内容示例：
+
+```json
+{
+  "stamp_us": 1718780000123456,
+  "frame_id": 15230,
+  "width": 640,
+  "height": 640,
+  "detections": [
+    {
+      "id": 0,
+      "name": "person",
+      "confidence": 0.87,
+      "box": [120, 80, 260, 340]
+    }
+  ]
+}
+```
+
+地面站 ROS1 环境中运行：
+
+```bash
+python3 python_demo/detection_udp_bridge.py _listen_port:=8890 _topic:=/vision/detections
+```
+
+如果在 Docker 容器中运行，建议容器使用 `--network host`，这样节点可以直接监听宿主机 UDP 端口。
+
 ## 📝 关键参数说明
 
 在 `src/main.cpp` 中可以调整以下宏定义：
 
 *   `DST_WIDTH` / `DST_HEIGHT`: RGA 输出和 MPP 编码的分辨率（默认 640x640）。
 *   `UDP_MTU`: UDP 分包大小（默认 1024），建议小于 MTU 1500。
+*   `DETECTION_PORT`: 检测结果 JSON 的 UDP 目标端口（默认 8890）。
 
 在 `src/mpp_encoder.cpp` 中可以调整编码参数：
 
